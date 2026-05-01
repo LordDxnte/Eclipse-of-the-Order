@@ -1,0 +1,15 @@
+{
+  "divine_essence": 11,
+  "total_runs": 4,
+  "bosses_defeated": 3,
+  "total_kills": 94,
+  "best_combo": 12,
+  "upg_max_hp": 100,
+  "upg_dash_cd": 45,
+  "upg_double_jump": true,
+  "upg_blink": true,
+  "upg_ult": true,
+  "upg_parry_window": 12,
+  "upg_relic_slots": 2,
+  "curse_level": 3
+}

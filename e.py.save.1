@@ -1,0 +1,2561 @@
+import pygame
+import sys
+import math
+import random
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  INIT
+# ─────────────────────────────────────────────────────────────────────────────
+pygame.init()
+WIDTH, HEIGHT = 1028, 720
+screen = pygame.display.set_mode((WIDTH, HEIGHT))
+pygame.display.set_caption("Eclipse of the Order")
+clock  = pygame.time.Clock()
+
+# ─── Palette ──────────────────────────────────────────────────────────────────
+BG_COLOR   = (6,  4, 12)
+C_INK      = (18, 12, 30)
+C_PARCH    = (210, 195, 160)
+C_PARCH2   = (170, 150, 110)
+C_SEPIA    = (120,  90,  50)
+C_INKBLOT  = ( 30,  10,  50)
+C_RUNEGLOW = (180, 120, 255)
+C_TORCHA   = (255, 180,  60)
+C_TORCHB   = (255, 120,  20)
+C_WHITE    = (240, 235, 255)
+C_RED      = (200,  40,  40)
+C_ORANGE   = (255, 140,   0)
+C_YELLOW   = (255, 220,   0)
+C_DARK_R   = ( 90,  10,  10)
+C_CYAN     = ( 80, 220, 255)
+C_PURPLE   = (160,  60, 255)
+C_GREY     = ( 80,  80,  90)
+C_VOID     = ( 40,   0,  80)
+C_STONE    = ( 55,  50,  65)
+C_STONE2   = ( 75,  68,  88)
+C_GOLD     = (255, 215,   0)
+C_HOLY     = (255, 245, 180)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AUDIO MANAGER
+# ─────────────────────────────────────────────────────────────────────────────
+class AudioManager:
+    def __init__(self):
+        pygame.mixer.set_num_channels(16)
+        self.sounds = {}
+        
+        self.ch_bgm = pygame.mixer.Channel(0)
+        self.ch_heartbeat = pygame.mixer.Channel(1)
+        
+        self.sfx_vol = 1.0
+        self.bgm_vol = 0.4
+
+    def load(self, name, filepath):
+        try:
+            self.sounds[name] = pygame.mixer.Sound(filepath)
+        except Exception:
+            print(f"Warning: Could not load audio file '{filepath}'")
+            self.sounds[name] = None
+
+    def play_sfx(self, name, volume=0.5):
+        if self.sounds.get(name):
+            self.sounds[name].set_volume(volume * self.sfx_vol)
+            self.sounds[name].play()
+            
+    def stop_sfx(self, name):
+        if self.sounds.get(name):
+            self.sounds[name].stop()
+
+    def set_bgm_volume(self, volume):
+        self.bgm_vol = max(0.0, min(1.0, volume))
+        self.ch_bgm.set_volume(self.bgm_vol)
+
+    def play_bgm(self, name, volume=None):
+        if volume is not None:
+            self.bgm_vol = volume
+        if self.sounds.get(name):
+            self.ch_bgm.play(self.sounds[name], loops=-1)
+            self.ch_bgm.set_volume(self.bgm_vol)
+
+audio = AudioManager()
+audio.load("slash", "slash.ogg")
+audio.load("dash", "dash.wav")
+audio.load("parry", "parry.wav")
+audio.load("hit", "hit.wav")
+audio.load("blink", "blink.wav")
+audio.load("heartbeat", "heartbeat.wav")
+audio.load("bgm_explore", "bgm_explore.wav")
+audio.load("bgm_boss", "bgm_boss.wav")
+
+audio.play_bgm("bgm_explore", audio.bgm_vol)
+
+# ─── Fonts ────────────────────────────────────────────────────────────────────
+F_BIG = pygame.font.SysFont("couriernew", 46, bold=True)
+F_MED = pygame.font.SysFont("couriernew", 21, bold=True)
+F_SM  = pygame.font.SysFont("couriernew", 13)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+def load_and_scale(path, scale=3):
+    try:
+        img = pygame.image.load(path).convert_alpha()
+        return pygame.transform.scale(img, (img.get_width()*scale, img.get_height()*scale))
+    except:
+        s = pygame.Surface((32*scale, 32*scale), pygame.SRCALPHA)
+        s.fill((255, 0, 255))
+        return s
+
+def glow(surface, color, cx, cy, radius, alpha=70):
+    s = pygame.Surface((radius*2, radius*2), pygame.SRCALPHA)
+    pygame.draw.circle(s, (*color, alpha), (radius, radius), radius)
+    surface.blit(s, (cx-radius, cy-radius), special_flags=pygame.BLEND_RGBA_ADD)
+
+def draw_text_centered(surface, text, font, color, cy):
+    sh = font.render(text, True, (0,0,0))
+    surface.blit(sh, (WIDTH//2 - sh.get_width()//2 + 2, cy+2))
+    t = font.render(text, True, color)
+    surface.blit(t, (WIDTH//2 - t.get_width()//2, cy))
+
+def draw_button(surface, text, font, color, rect, hover_color):
+    mx, my = pygame.mouse.get_pos()
+    c = hover_color if rect.collidepoint(mx, my) else color
+    pygame.draw.rect(surface, c, rect, 2, border_radius=4)
+    txt = font.render(text, True, c)
+    surface.blit(txt, (rect.centerx - txt.get_width()//2, rect.centery - txt.get_height()//2))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PROCEDURAL ENVIRONMENT ASSETS 
+# ─────────────────────────────────────────────────────────────────────────────
+def _generate_floor():
+    surf = pygame.Surface((128, 220))
+    surf.fill((20, 18, 28)) 
+    for y in range(0, 220, 32):
+        for x in range(0, 128, 64):
+            offset = 32 if (y // 32) % 2 != 0 else 0
+            pygame.draw.rect(surf, (35, 32, 45), (x - offset, y, 64, 32))
+            pygame.draw.rect(surf, (50, 45, 65), (x - offset, y, 64, 2)) 
+            pygame.draw.rect(surf, (15, 12, 20), (x - offset, y+30, 64, 2)) 
+            pygame.draw.rect(surf, (15, 12, 20), (x - offset + 62, y, 2, 32)) 
+    
+    pygame.draw.rect(surf, (10, 8, 15), (0, 0, 128, 24))
+    for i in range(0, 128, 16):
+        pygame.draw.polygon(surf, (10, 8, 15), [(i, 24), (i+8, 34), (i+16, 24)])
+    
+    pygame.draw.line(surf, C_PURPLE, (0, 4), (128, 4), 2)
+    pygame.draw.line(surf, C_CYAN, (0, 6), (128, 6), 1)
+    return surf
+
+def _generate_platform(frame_idx):
+    surf = pygame.Surface((160, 60), pygame.SRCALPHA)
+    pygame.draw.rect(surf, (35, 32, 45), (10, 10, 140, 20), border_radius=4)
+    pygame.draw.line(surf, (55, 50, 70), (15, 12), (145, 12), 2)
+    pygame.draw.line(surf, (15, 12, 20), (15, 28), (145, 28), 2)
+    
+    glow_y = 30
+    for i in range(7):
+        gx = 20 + i * 20
+        gy = glow_y + math.sin(frame_idx * 1.2 + i) * 6
+        r = int(5 + math.sin(frame_idx * 0.8 + i) * 2)
+        pygame.draw.circle(surf, (*C_CYAN, 180), (gx, int(gy)), r)
+        pygame.draw.circle(surf, (*C_WHITE, 200), (gx, int(gy)), int(r*0.4))
+    
+    pygame.draw.line(surf, C_GREY, (30, 30), (30, 50), 2)
+    pygame.draw.line(surf, C_GREY, (130, 30), (130, 45), 2)
+    return surf
+
+floor_img   = _generate_floor()
+plat_frames = [_generate_platform(i) for i in range(5)]
+
+_SH = 90
+
+def _load_seraph_frame(path):
+    img = pygame.image.load(path).convert_alpha()
+    sw  = int(img.get_width() * (_SH / img.get_height()))
+    return pygame.transform.smoothscale(img, (sw, _SH))
+
+SERAPH_FRAMES_R: list = []   
+SERAPH_FRAMES_L: list = []   
+SERAPH_HAS_PNG  = False
+
+_numbered = []
+for _fi in range(1, 5):
+    try:
+        _numbered.append(_load_seraph_frame(f"seraph{_fi}.png"))
+    except Exception:
+        break
+
+if len(_numbered) >= 2:
+    SERAPH_FRAMES_R = _numbered
+    SERAPH_FRAMES_L = [pygame.transform.flip(f, True, False) for f in SERAPH_FRAMES_R]
+    SERAPH_HAS_PNG  = True
+else:
+    try:
+        _base = _load_seraph_frame("seraph.png")
+        _bw, _bh = _base.get_size()
+        _pad = 10          
+        for _dy in [0, -_pad//2, -_pad, -_pad//2]:
+            _canvas = pygame.Surface((_bw, _bh + _pad), pygame.SRCALPHA)
+            _canvas.blit(_base, (0, _dy + _pad // 2))
+            SERAPH_FRAMES_R.append(_canvas)
+        SERAPH_FRAMES_L = [pygame.transform.flip(f, True, False) for f in SERAPH_FRAMES_R]
+        SERAPH_HAS_PNG  = True
+    except Exception:
+        pass  
+
+SERAPH_IMG_R = SERAPH_FRAMES_R[0] if SERAPH_FRAMES_R else None
+SERAPH_IMG_L = SERAPH_FRAMES_L[0] if SERAPH_FRAMES_L else None
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  VOID-FUSED CASTLE BACKGROUND  (procedural)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _make_castle_bg():
+    W, H = 6000, HEIGHT
+    surf = pygame.Surface((W, H))
+    surf.fill((5, 3, 14))   
+    rng  = random.Random(7)
+
+    for _ in range(35):
+        rx  = rng.randint(0, W)
+        ry  = rng.randint(30, H - 100)
+        rlen = rng.randint(40, 200)
+        ang  = rng.uniform(-0.4, 0.4)
+        for step in range(rlen):
+            t   = step / rlen
+            px  = int(rx + math.cos(ang) * step + rng.randint(-2, 2))
+            py  = int(ry + math.sin(ang) * step * 0.3 + rng.randint(-3, 3))
+            a   = int(90 * math.sin(t * math.pi))
+            col = (*C_PURPLE, a)
+            s2  = pygame.Surface((4, 4), pygame.SRCALPHA)
+            pygame.draw.circle(s2, col, (2, 2), 2)
+            surf.blit(s2, (px, py))
+        gc = pygame.Surface((12, 12), pygame.SRCALPHA)
+        pygame.draw.circle(gc, (*C_CYAN, 60), (6, 6), 6)
+        surf.blit(gc, (rx - 6, ry - 6))
+
+    for i in range(0, W, rng.randint(300, 500)):
+        bx = i + rng.randint(-40, 40)
+        bh = rng.randint(180, 340)
+        bw = rng.randint(60, 110)
+        by = H - bh - 80
+        alpha = rng.randint(55, 100)
+        col   = (*C_STONE, alpha)
+
+        tower = pygame.Surface((bw, bh), pygame.SRCALPHA)
+        tower.fill(col)
+        surf.blit(tower, (bx, by))
+
+        merlon_w = rng.randint(10, 18)
+        gap      = rng.randint(6, 12)
+        for mx in range(0, bw, merlon_w + gap):
+            mh = rng.randint(14, 26)
+            ms = pygame.Surface((merlon_w, mh), pygame.SRCALPHA)
+            ms.fill(col)
+            surf.blit(ms, (bx + mx, by - mh))
+
+        wx = bx + bw // 2 - 7
+        wy = by + rng.randint(20, bh - 60)
+        ww, wh = 14, 28
+        win = pygame.Surface((ww, wh), pygame.SRCALPHA)
+        win.fill((*C_PURPLE, rng.randint(60, 120)))
+        surf.blit(win, (wx, wy))
+        arch_s = pygame.Surface((ww, ww), pygame.SRCALPHA)
+        pygame.draw.ellipse(arch_s, (*C_PURPLE, rng.randint(50, 100)), (0, 0, ww, ww))
+        surf.blit(arch_s, (wx, wy - ww // 2))
+
+        for _ in range(rng.randint(1, 4)):
+            cx1 = bx + rng.randint(4, bw - 4)
+            cy1 = by + rng.randint(0, bh // 2)
+            clen = rng.randint(20, 80)
+            for step in range(clen):
+                cx1 += rng.randint(-1, 1)
+                cy1 += 1
+                if 0 < cx1 < W and 0 < cy1 < H:
+                    surf.set_at((cx1, cy1), (*C_INK, rng.randint(80, 180)))
+
+    for _ in range(120):
+        dx = rng.randint(0, W)
+        dy = rng.randint(20, H - 200)
+        dw = rng.randint(8, 45)
+        dh = rng.randint(6, 28)
+        alpha = rng.randint(30, 80)
+        chunk = pygame.Surface((dw, dh), pygame.SRCALPHA)
+        chunk.fill((*C_STONE2, alpha))
+        if dw > 12 and dh > 8:
+            pygame.draw.polygon(chunk, (0, 0, 0, 0),
+                [(0, 0), (rng.randint(2,6), 0),
+                 (dw, rng.randint(2,5)), (dw, dh),
+                 (dw - rng.randint(2,6), dh), (0, dh - rng.randint(2,5))])
+        surf.blit(chunk, (dx, dy))
+
+    for _ in range(40):
+        chx = rng.randint(0, W)
+        chlen = rng.randint(30, 120)
+        for link in range(0, chlen, 8):
+            lx = chx + int(math.sin(link * 0.3) * 3)
+            ly = rng.randint(0, 60) + link
+            alpha = rng.randint(25, 70)
+            ls = pygame.Surface((6, 6), pygame.SRCALPHA)
+            pygame.draw.rect(ls, (*C_GREY, alpha), (1, 0, 4, 6), 1, border_radius=1)
+            surf.blit(ls, (lx, ly))
+
+    for _ in range(500):
+        sx2 = rng.randint(0, W)
+        sy2 = rng.randint(0, H)
+        sr  = rng.choice([1, 1, 1, 2])
+        alpha = rng.randint(30, 120)
+        col2 = rng.choice([(150, 150, 255), (200, 180, 255), (255, 255, 255), (180, 120, 255)])
+        pygame.draw.circle(surf, (*col2, alpha), (sx2, sy2), sr)
+
+    return surf
+
+def _make_castle_midground():
+    W, H = 6000, HEIGHT
+    surf = pygame.Surface((W, H), pygame.SRCALPHA)
+    rng  = random.Random(13)
+
+    for i in range(0, W, rng.randint(160, 320)):
+        ox   = i + rng.randint(-20, 20)
+        kind = rng.randint(0, 2)
+
+        if kind == 0:
+            aw = rng.randint(55, 100)
+            ah = rng.randint(90, 180)
+            ay = H - ah - 95
+            alpha = rng.randint(90, 160)
+            col = (*C_STONE, alpha)
+            pygame.draw.rect(surf, col, (ox, ay, 14, ah))
+            pygame.draw.rect(surf, col, (ox + aw - 14, ay, 14, ah))
+            if rng.random() > 0.4:
+                arch_surf = pygame.Surface((aw, aw), pygame.SRCALPHA)
+                pygame.draw.arc(arch_surf, col, (0, 0, aw, aw), 0, math.pi, 10)
+                surf.blit(arch_surf, (ox, ay - aw // 2))
+
+        elif kind == 1:
+            ww = rng.randint(80, 200)
+            wh = rng.randint(50, 120)
+            wy = H - wh - 95
+            alpha = rng.randint(100, 180)
+            col = (*C_STONE2, alpha)
+            pygame.draw.rect(surf, col, (ox, wy, ww, wh))
+            mw = 12
+            for mx in range(0, ww, 18):
+                mh = rng.randint(12, 22)
+                pygame.draw.rect(surf, col, (ox + mx, wy - mh, mw, mh))
+            for _ in range(rng.randint(2, 6)):
+                cx2 = ox + rng.randint(0, ww)
+                ch2 = rng.randint(5, 25)
+                cw2 = rng.randint(8, 30)
+                pygame.draw.rect(surf, (0, 0, 0, 0), (cx2, wy + wh - ch2, cw2, ch2))
+
+        else:
+            fw = rng.randint(100, 220)
+            fy = H - 115
+            for spike_x in range(ox, ox + fw, 14):
+                spike_h = rng.randint(20, 45)
+                alpha   = rng.randint(100, 180)
+                pygame.draw.line(surf, (*C_GREY, alpha),
+                                 (spike_x, fy), (spike_x, fy - spike_h), 3)
+                pygame.draw.polygon(surf,
+                    (*C_GREY, alpha),
+                    [(spike_x - 3, fy - spike_h),
+                     (spike_x,     fy - spike_h - 10),
+                     (spike_x + 3, fy - spike_h)])
+
+        for _ in range(rng.randint(0, 4)):
+            rx2 = ox + rng.randint(-80, 80)
+            ry2 = rng.randint(H // 3, H - 200)
+            rw2 = rng.randint(6, 22)
+            rh2 = rng.randint(5, 16)
+            alpha2 = rng.randint(50, 130)
+            pygame.draw.rect(surf, (*C_STONE, alpha2),
+                             (rx2, ry2, rw2, rh2), border_radius=2)
+
+    return surf
+
+_BG_SURF = _make_castle_bg()
+_MG_SURF = _make_castle_midground()
+
+def _draw_bg_layer(surface, offset):
+    W  = _BG_SURF.get_width()
+    ox = int(offset) % W
+    surface.blit(_BG_SURF, (-ox, 0))
+    if -ox + W < WIDTH:
+        surface.blit(_BG_SURF, (-ox + W, 0))
+
+def _draw_mg_layer(surface, offset):
+    W  = _MG_SURF.get_width()
+    ox = int(offset) % W
+    surface.blit(_MG_SURF, (-ox, 0))
+    if -ox + W < WIDTH:
+        surface.blit(_MG_SURF, (-ox + W, 0))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  VOID BLINK  (teleport VFX — tear effect)
+# ─────────────────────────────────────────────────────────────────────────────
+class VoidTear:
+    def __init__(self, x, y, color=C_PURPLE):
+        self.x     = x
+        self.y     = y
+        self.color = color
+        self.life  = 22
+        self.max   = 22
+        self.rings = [(random.randint(8, 20), random.uniform(0.6, 1.4)) for _ in range(5)]
+
+    @property
+    def alive(self):
+        return self.life > 0
+
+    def update(self, dt_mult=1.0):
+        self.life -= 1 * dt_mult
+
+    def draw(self, surface, cam_x):
+        t = 1 - self.life / self.max
+        for base_r, aspect in self.rings:
+            r  = int(base_r + t * 55)
+            rh = int(r * aspect * 0.5)
+            a  = int(200 * (1 - t))
+            if a <= 0:
+                continue
+            s = pygame.Surface((r * 2, rh * 2), pygame.SRCALPHA)
+            pygame.draw.ellipse(s, (*self.color, a), (0, 0, r * 2, rh * 2), 2)
+            surface.blit(s, (int(self.x - cam_x) - r, int(self.y) - rh))
+
+void_tears: list[VoidTear] = []
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TORCH
+# ─────────────────────────────────────────────────────────────────────────────
+class Torch:
+    def __init__(self, x, y):
+        self.x, self.y = x, y
+        self.flicker   = 0.0
+        self.phase     = random.uniform(0, math.pi*2)
+
+    def update(self, dt_mult=1.0):
+        self.phase   += (0.12 + random.uniform(-0.02, 0.02)) * dt_mult
+        self.flicker  = 0.85 + 0.15 * math.sin(self.phase)
+
+    def draw(self, surface, cam_x, light_layer):
+        sx = int(self.x - cam_x)
+        sy = int(self.y)
+        pygame.draw.rect(surface, C_SEPIA,  (sx-3, sy, 6, 18), border_radius=2)
+        pygame.draw.rect(surface, C_PARCH2, (sx-5, sy-4, 10, 6), border_radius=2)
+        for _ in range(3):
+            fx = sx + random.randint(-4, 4)
+            fy = sy - random.randint(4, 14)
+            fr = random.randint(2, 5)
+            col = C_TORCHB if random.random() < 0.5 else C_TORCHA
+            pygame.draw.circle(surface, col, (fx, fy), fr)
+        r = int(160 * self.flicker)
+        glow(light_layer, C_TORCHB, sx, sy-8, r, 35)
+        glow(light_layer, C_TORCHB, sx, sy-8, r//2, 55)
+        glow(light_layer, C_TORCHB, sx, sy-8, 20, 90)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PARTICLE SYSTEM
+# ─────────────────────────────────────────────────────────────────────────────
+particles: list[dict] = []
+
+def spawn_particles(x, y, n, color_choices,
+                    speed=4, spread=math.pi*2,
+                    direction=None, gravity=0.3,
+                    size_range=(2,6), life_range=(12,35)):
+    for _ in range(n):
+        angle = (direction if direction is not None else random.uniform(0, math.pi*2)) \
+                + random.uniform(-spread/2, spread/2)
+        spd = random.uniform(speed*0.4, speed)
+        particles.append({
+            "x": x, "y": y,
+            "vx": math.cos(angle)*spd,
+            "vy": math.sin(angle)*spd,
+            "gravity": gravity,
+            "life": random.randint(*life_range),
+            "max_life": life_range[1],
+            "size": random.randint(*size_range),
+            "color": random.choice(color_choices),
+        })
+
+def update_particles(dt_mult=1.0):
+    for p in particles:
+        p["x"]  += p["vx"] * dt_mult
+        p["y"]  += p["vy"] * dt_mult
+        p["vy"] += p["gravity"] * dt_mult
+        p["life"] -= 1 * dt_mult
+    particles[:] = [p for p in particles if p["life"] > 0]
+
+def draw_particles(surface, cam_x):
+    for p in particles:
+        alpha = int(255 * p["life"] / p["max_life"])
+        r     = max(1, p["size"])
+        s     = pygame.Surface((r*2, r*2), pygame.SRCALPHA)
+        pygame.draw.circle(s, (*p["color"], alpha), (r, r), r)
+        surface.blit(s, (int(p["x"]-cam_x)-r, int(p["y"])-r))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AFTERIMAGE
+# ─────────────────────────────────────────────────────────────────────────────
+class Afterimage:
+    def __init__(self, image, x, y):
+        self.image = image.copy()
+        self.x, self.y = x, y
+        self.alpha = 210
+        self.fade  = 22
+
+    @property
+    def alive(self): return self.alpha > 0
+
+    def update(self): self.alpha = max(0, self.alpha - self.fade)
+
+    def draw(self, surface, cam_x):
+        ghost = self.image.copy()
+        tint  = pygame.Surface(ghost.get_size(), pygame.SRCALPHA)
+        tint.fill((120, 60, 255, 140))
+        ghost.blit(tint, (0,0), special_flags=pygame.BLEND_RGBA_MULT)
+        ghost.set_alpha(self.alpha)
+        surface.blit(ghost, (self.x - cam_x, self.y))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PROJECTILE  (Updated with Spearhead and Flaming Gold styles)
+# ─────────────────────────────────────────────────────────────────────────────
+class Projectile:
+    def __init__(self, x, y, vx, vy, color=C_RED, radius=8, homing=False, target=None, speed=5, shooter=None, proj_type="generic"):
+        self.pos    = pygame.Vector2(x, y)
+        self.vel    = pygame.Vector2(vx, vy)
+        self.color  = color
+        self.radius = radius
+        self.alive  = True
+        self.trail: list[tuple] = []
+        self.homing = homing
+        self.target = target
+        self.speed  = speed
+        self.shooter = shooter
+        self.parried = False
+        self.proj_type = proj_type
+        
+        self.flames = []
+
+    def deflect(self):
+        self.vel    = -self.vel
+        self.homing = False
+        self.color  = C_CYAN
+        self.parried = True
+
+    def update(self, player, dt_mult=1.0):
+        if self.homing and self.target and self.target.alive:
+            dx = self.target.rect.centerx - self.pos.x
+            dy = self.target.rect.centery - self.pos.y
+            d  = max(1, math.hypot(dx, dy))
+            desired = pygame.Vector2(dx/d * self.speed, dy/d * self.speed)
+            self.vel += (desired - self.vel) * 0.06 * dt_mult
+
+        self.trail.append((self.pos.x, self.pos.y))
+        if len(self.trail) > 8: self.trail.pop(0)
+        self.pos += self.vel * dt_mult
+        
+        if self.proj_type == "flaming_gold":
+            self.flames.append([self.pos.x, self.pos.y, float(random.randint(8, 14))])
+            for f in self.flames:
+                f[2] -= 0.8 * dt_mult
+                f[1] -= random.uniform(0.5, 1.5) * dt_mult
+            self.flames = [f for f in self.flames if f[2] > 0]
+            
+        if self.pos.x < -400 or self.pos.x > 7000 or self.pos.y > 900:
+            self.alive = False
+
+        if self.parried and self.shooter is not None:
+            shooter_rect = getattr(self.shooter, 'rect', None)
+            if shooter_rect and shooter_rect.collidepoint(self.pos.x, self.pos.y):
+                self.alive = False
+                if hasattr(self.shooter, 'hp'):
+                    self.shooter.hp -= 1
+                    if hasattr(self.shooter, 'hit_timer'):
+                        self.shooter.hit_timer = 14
+                    if hasattr(self.shooter, 'is_alive') and self.shooter.hp <= 0:
+                        self.shooter.is_alive = False
+                    elif hasattr(self.shooter, 'alive') and self.shooter.hp <= 0:
+                        self.shooter.alive = False
+                spawn_particles(self.pos.x, self.pos.y, 14,
+                                [C_CYAN, C_WHITE, C_RUNEGLOW],
+                                speed=4, gravity=0.2, life_range=(8, 22))
+                return
+
+        dist = math.hypot(self.pos.x - player.rect.centerx,
+                          self.pos.y - player.rect.centery)
+        if dist < self.radius + 14 and not self.parried:
+            self.alive = False
+            player.take_damage()
+            spawn_particles(self.pos.x, self.pos.y, 8,
+                            [C_RED, C_ORANGE, C_PARCH],
+                            speed=3, gravity=0.4, life_range=(8,20))
+
+    def draw(self, surface, cam_x):
+        sx, sy = int(self.pos.x - cam_x), int(self.pos.y)
+        angle = math.atan2(self.vel.y, self.vel.x)
+
+        if self.proj_type == "spearhead":
+            for i, (tx, ty) in enumerate(self.trail):
+                a  = int(150 * i / max(1, len(self.trail)))
+                tr = max(1, self.radius - (len(self.trail)-i))
+                ts = pygame.Surface((tr*2, tr*2), pygame.SRCALPHA)
+                pygame.draw.circle(ts, (*self.color, a), (tr, tr), tr)
+                surface.blit(ts, (int(tx-cam_x)-tr, int(ty)-tr))
+
+            l = 18 
+            w = 8  
+            points = [
+                (sx + math.cos(angle)*l, sy + math.sin(angle)*l), 
+                (sx + math.cos(angle + 2.5)*w, sy + math.sin(angle + 2.5)*w), 
+                (sx - math.cos(angle)*4, sy - math.sin(angle)*4), 
+                (sx + math.cos(angle - 2.5)*w, sy + math.sin(angle - 2.5)*w)  
+            ]
+            
+            glow_s = pygame.Surface((40, 40), pygame.SRCALPHA)
+            adj_pts = [(p[0] - sx + 20, p[1] - sy + 20) for p in points]
+            pygame.draw.polygon(glow_s, (*self.color, 120), adj_pts)
+            pygame.draw.polygon(glow_s, (*self.color, 60), adj_pts, 4)
+            surface.blit(glow_s, (sx - 20, sy - 20))
+            
+            pygame.draw.polygon(surface, C_WHITE, points)
+
+        elif self.proj_type == "flaming_gold":
+            for fx, fy, fr in self.flames:
+                c = C_CYAN if self.parried else random.choice([C_GOLD, C_ORANGE, C_RED])
+                s = pygame.Surface((int(fr*2), int(fr*2)), pygame.SRCALPHA)
+                pygame.draw.circle(s, (*c, 150), (int(fr), int(fr)), int(fr))
+                surface.blit(s, (int(fx - cam_x) - int(fr), int(fy) - int(fr)))
+
+            pygame.draw.circle(surface, C_WHITE, (sx, sy), self.radius - 2)
+            
+            for _ in range(4):
+                sa = angle + random.uniform(-math.pi, math.pi)
+                sl = self.radius + random.randint(2, 8)
+                sc = C_CYAN if self.parried else C_GOLD
+                pygame.draw.line(surface, sc, (sx, sy), 
+                                 (sx + math.cos(sa)*sl, sy + math.sin(sa)*sl), 2)
+        else:
+            for i, (tx, ty) in enumerate(self.trail):
+                a  = int(120 * i / max(1, len(self.trail)))
+                tr = max(1, self.radius - (len(self.trail)-i))
+                ts = pygame.Surface((tr*2, tr*2), pygame.SRCALPHA)
+                pygame.draw.circle(ts, (*self.color, a), (tr, tr), tr)
+                surface.blit(ts, (int(tx-cam_x)-tr, int(ty)-tr))
+            for r, a in [(self.radius*3, 30), (self.radius*2, 60), (self.radius, 255)]:
+                s = pygame.Surface((r*2, r*2), pygame.SRCALPHA)
+                pygame.draw.circle(s, (*self.color, a), (r,r), r)
+                surface.blit(s, (sx-r, sy-r))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  HOLY PILLAR  (Seraph area-denial attack)
+# ─────────────────────────────────────────────────────────────────────────────
+class HolyPillar:
+    WARN_DUR   = 75
+    ACTIVE_DUR = 40
+    WIDTH_PX   = 60
+
+    def __init__(self, x):
+        self.x      = x
+        self.timer  = self.WARN_DUR + self.ACTIVE_DUR
+        self.alive  = True
+
+    @property
+    def warning(self):
+        return self.timer > self.ACTIVE_DUR
+
+    @property
+    def active(self):
+        return self.timer <= self.ACTIVE_DUR
+
+    def update(self, player, dt_mult=1.0):
+        self.timer -= 1 * dt_mult
+        if self.timer <= 0:
+            self.alive = False
+            return
+        if self.active:
+            hr = pygame.Rect(int(self.x - self.WIDTH_PX//2), 0,
+                             self.WIDTH_PX, HEIGHT)
+            if hr.colliderect(player.rect):
+                player.take_damage()
+
+    def draw(self, surface, cam_x):
+        sx = int(self.x - cam_x)
+        t  = self.timer
+        if self.warning:
+            pulse = 0.5 + 0.5 * math.sin(t * 0.3)
+            a = int(60 * pulse)
+            col_surf = pygame.Surface((self.WIDTH_PX, HEIGHT), pygame.SRCALPHA)
+            col_surf.fill((*C_HOLY, a))
+            surface.blit(col_surf, (sx - self.WIDTH_PX//2, 0))
+            wa = int(120 * pulse)
+            ws = pygame.Surface((self.WIDTH_PX * 2, 30), pygame.SRCALPHA)
+            pygame.draw.ellipse(ws, (*C_GOLD, wa),
+                                (0, 0, self.WIDTH_PX * 2, 30))
+            surface.blit(ws, (sx - self.WIDTH_PX, 490))
+        else:
+            progress = 1 - t / self.ACTIVE_DUR
+            a = int(200 * (1 - progress * 0.5))
+            col_surf = pygame.Surface((self.WIDTH_PX, HEIGHT), pygame.SRCALPHA)
+            col_surf.fill((*C_HOLY, a))
+            surface.blit(col_surf, (sx - self.WIDTH_PX//2, 0))
+            core = pygame.Surface((20, HEIGHT), pygame.SRCALPHA)
+            core.fill((*C_WHITE, min(255, a + 40)))
+            surface.blit(core, (sx - 10, 0))
+            if random.random() < 0.6:
+                spawn_particles(self.x, random.randint(0, HEIGHT), 1,
+                                [C_HOLY, C_GOLD, C_WHITE],
+                                speed=2, gravity=-0.1,
+                                size_range=(2, 5), life_range=(8, 20))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  GRUNT
+# ─────────────────────────────────────────────────────────────────────────────
+class Grunt:
+    def __init__(self, x, y, patrol_left, patrol_right):
+        self.walk_frames = []
+        self.walk_left   = []
+        target_h = 65
+        fixed_w  = 48
+
+        for i in range(1, 6):
+            try:
+                img    = pygame.image.load(f"thug{i}.png").convert_alpha()
+                scaled = pygame.transform.smoothscale(img, (fixed_w, target_h))
+                self.walk_frames.append(scaled)
+            except:
+                err_surf = pygame.Surface((fixed_w, target_h), pygame.SRCALPHA)
+                err_surf.fill((180, 120, 255, 200))
+                self.walk_frames.append(err_surf)
+
+        for f in self.walk_frames:
+            self.walk_left.append(pygame.transform.flip(f, True, False))
+
+        self.image = self.walk_frames[0]
+        self.rect  = pygame.Rect(x, y, fixed_w, target_h)
+        self.pos   = pygame.Vector2(x, y)
+        self.vel   = pygame.Vector2(0, 0)
+
+        self.hp           = 3
+        self.alive        = True
+        self.patrol_left  = patrol_left
+        self.patrol_right = patrol_right
+        self.direction    = 1
+        self.anim_index   = 0.0
+        self.state        = "patrol"
+        self.melee_timer  = random.randint(20, 50)
+        self.melee_active = 0
+        self.MELEE_CD     = 55
+        self.MELEE_DUR    = 16
+        self.projectiles  = []
+
+    def update(self, player, platforms, dt_mult=1.0):
+        if not self.alive: return
+        dx   = player.rect.centerx - self.rect.centerx
+        dy   = player.rect.centery - self.rect.centery
+        dist = math.hypot(dx, dy)
+
+        if dist < 70:    self.state = "attack"
+        elif dist < 450: self.state = "chase"
+        else:            self.state = "patrol"
+
+        if self.state == "patrol":
+            self.pos.x += 2 * self.direction * dt_mult
+            if self.pos.x < self.patrol_left:  self.direction = 1
+            if self.pos.x > self.patrol_right: self.direction = -1
+        elif self.state == "chase":
+            self.direction = 1 if player.rect.x > self.rect.x else -1
+            self.pos.x += 3 * self.direction * dt_mult
+        elif self.state == "attack":
+            self.direction = 1 if player.rect.x > self.rect.x else -1
+            if dist > 45:
+                self.pos.x += 2.5 * self.direction * dt_mult
+            self.melee_timer -= 1 * dt_mult
+            if self.melee_timer <= 0:
+                self.melee_timer  = float(self.MELEE_CD)
+                self.melee_active = self.MELEE_DUR
+                spawn_particles(self.rect.centerx + self.direction * 30, self.rect.centery,
+                                6, [C_PURPLE, C_WHITE],
+                                speed=3, size_range=(2, 5), life_range=(6, 14))
+
+        if self.melee_active > 0:
+            self.melee_active -= 1 * dt_mult
+            melee_rect = pygame.Rect(0, 0, 56, 70)
+            if self.direction > 0: melee_rect.midleft  = self.rect.midright
+            else:                  melee_rect.midright = self.rect.midleft
+            if melee_rect.colliderect(player.rect):
+                player.take_damage()
+
+        self.anim_index = (self.anim_index + 0.15 * dt_mult) % len(self.walk_frames)
+        if self.direction > 0:
+            self.image = self.walk_frames[int(self.anim_index)]
+        else:
+            self.image = self.walk_left[int(self.anim_index)]
+
+        self.rect.x  = int(self.pos.x)
+        self.vel.y   = min(self.vel.y + 0.8 * dt_mult, 20)
+        self.pos.y  += self.vel.y * dt_mult
+        self.rect.y  = int(self.pos.y)
+
+        if self.rect.bottom >= 500:
+            self.rect.bottom = 500
+            self.vel.y = 0
+            self.pos.y = self.rect.y
+
+    def draw(self, surface, cam_x):
+        if self.alive:
+            surface.blit(self.image, (self.rect.x - cam_x, self.rect.y))
+            if self.melee_active > 0:
+                arc_s = pygame.Surface((80, 60), pygame.SRCALPHA)
+                a_arc = int(180 * self.melee_active / self.MELEE_DUR)
+                pygame.draw.arc(arc_s, (*C_PURPLE, a_arc), (0, 0, 80, 60),
+                                -math.pi / 3, math.pi / 3, 5)
+                sx = self.rect.x - int(cam_x)
+                if self.direction > 0:
+                    surface.blit(arc_s, (sx + self.rect.width - 10, self.rect.centery - 30))
+                else:
+                    surface.blit(pygame.transform.flip(arc_s, True, False),
+                                 (sx - 70, self.rect.centery - 30))
+
+    def draw_light(self, light_layer, cam_x):
+        if not self.alive: return
+        gx = int(self.rect.centerx - cam_x)
+        gy = int(self.rect.centery)
+        glow(light_layer, (180, 120, 255), gx, gy, 60, 20)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SERAPH  
+# ─────────────────────────────────────────────────────────────────────────────
+class Seraph:
+    MAX_HP = 8
+
+    BEAM_CD   = 320
+    DIVE_CD   = 420
+    PILLAR_CD = 480
+
+    def __init__(self, x, y):
+        self.rect        = pygame.Rect(x, y, 50, 70)
+        self.pos         = pygame.Vector2(x, y)
+        self.base_y      = float(y)
+        self.hover_timer = random.uniform(0, math.pi * 2)
+
+        self.hp          = self.MAX_HP
+        self.alive       = True
+        self.hit_timer   = 0
+
+        self.state       = "hover"
+        self.dive_target = pygame.Vector2(x, y)
+        self.dive_origin = pygame.Vector2(x, y)
+        self.dive_timer  = 0
+
+        self.beam_cd   = random.randint(180, self.BEAM_CD)
+        self.dive_cd   = random.randint(200, self.DIVE_CD)
+        self.pillar_cd = random.randint(220, self.PILLAR_CD)
+
+        self.projectiles: list[Projectile] = []
+        self.pillars:     list[HolyPillar] = []
+
+        self.wing_phase     = random.uniform(0, math.pi * 2)
+        self.glow_phase     = random.uniform(0, math.pi * 2)
+        self._facing_right  = True
+        self.wing_anim_idx  = random.uniform(0, len(SERAPH_FRAMES_R) if SERAPH_FRAMES_R else 4)
+
+    def _fire_beam(self, player):
+        ox, oy = self.rect.centerx, self.rect.centery
+        dx     = player.rect.centerx - ox
+        dy     = player.rect.centery - oy
+        d      = max(1, math.hypot(dx, dy))
+        self.projectiles.append(
+            Projectile(ox, oy, (dx/d)*4, (dy/d)*4,
+                       C_GOLD, radius=9,
+                       homing=True, target=player, speed=3.0, shooter=self, proj_type="spearhead"))
+        spawn_particles(ox, oy, 10, [C_GOLD, C_HOLY, C_WHITE],
+                        speed=3, gravity=-0.1, size_range=(2, 5), life_range=(8, 20))
+
+    def _start_dive(self, player):
+        self.state       = "dive"
+        self.dive_origin = pygame.Vector2(self.pos)
+        self.dive_target = pygame.Vector2(player.rect.centerx, 460)
+        self.dive_timer  = 0
+
+    def _update_dive(self, player):
+        self.dive_timer += 1
+        t    = min(1.0, self.dive_timer / 22)
+        ease = t * t * (3 - 2 * t)
+        self.pos.x = self.dive_origin.x + (self.dive_target.x - self.dive_origin.x) * ease
+        self.pos.y = self.dive_origin.y + (self.dive_target.y - self.dive_origin.y) * ease
+        self.rect.topleft = (int(self.pos.x), int(self.pos.y))
+
+        if self.dive_timer % 2 == 0:
+            spawn_particles(self.rect.centerx, self.rect.centery, 4,
+                            [C_GOLD, C_WHITE, C_HOLY],
+                            speed=2, gravity=0.1,
+                            size_range=(2, 6), life_range=(6, 16))
+
+        if t >= 1.0:
+            spawn_particles(self.rect.centerx, self.rect.bottom, 20,
+                            [C_GOLD, C_WHITE, C_HOLY],
+                            speed=5, spread=math.pi, direction=-math.pi/2,
+                            gravity=0.2, size_range=(3, 8), life_range=(12, 30))
+            if abs(player.rect.centerx - self.rect.centerx) < 80:
+                player.take_damage()
+            self.state      = "return"
+            self.dive_timer = 0
+            self.base_y     = self.dive_origin.y
+
+    def _update_return(self):
+        self.dive_timer += 1
+        t    = min(1.0, self.dive_timer / 35)
+        ease = t * t * (3 - 2 * t)
+        self.pos.x = self.dive_target.x + (self.dive_origin.x - self.dive_target.x) * ease
+        self.pos.y = self.dive_target.y + (self.dive_origin.y - self.dive_target.y) * ease
+        self.rect.topleft = (int(self.pos.x), int(self.pos.y))
+        if t >= 1.0:
+            self.state = "hover"
+
+    def _summon_pillar(self, player):
+        target_x = player.rect.centerx + int(player.vel.x * 15)
+        self.pillars.append(HolyPillar(target_x))
+        offset = random.choice([-130, 130])
+        self.pillars.append(HolyPillar(target_x + offset))
+
+    def update(self, player, dt_mult=1.0):
+        if not self.alive: return
+        if self.hit_timer > 0: self.hit_timer -= 1 * dt_mult
+
+        for pl in self.pillars: pl.update(player, dt_mult)
+        self.pillars = [pl for pl in self.pillars if pl.alive]
+
+        for proj in self.projectiles: proj.update(player, dt_mult)
+        self.projectiles = [proj for proj in self.projectiles if proj.alive]
+
+        self.hover_timer    += 0.04 * dt_mult
+        self.wing_phase     += 0.08 * dt_mult
+        self.glow_phase     += 0.05 * dt_mult
+        n_frames = len(SERAPH_FRAMES_R) if SERAPH_FRAMES_R else 4
+        self.wing_anim_idx   = (self.wing_anim_idx + 0.18 * dt_mult) % n_frames
+
+        if self.state == "hover":
+            if player.rect.centerx > self.rect.centerx:
+                self.pos.x += 0.8 * dt_mult
+                self._facing_right = True
+            elif player.rect.centerx < self.rect.centerx:
+                self.pos.x -= 0.8 * dt_mult
+                self._facing_right = False
+            self.pos.y = self.base_y + math.sin(self.hover_timer) * 18
+            self.rect.topleft = (int(self.pos.x), int(self.pos.y))
+
+            self.beam_cd   -= 1 * dt_mult
+            self.dive_cd   -= 1 * dt_mult
+            self.pillar_cd -= 1 * dt_mult
+
+            if self.beam_cd <= 0:
+                self._fire_beam(player)
+                self.beam_cd = self.BEAM_CD
+
+            if self.pillar_cd <= 0:
+                self._summon_pillar(player)
+                self.pillar_cd = self.PILLAR_CD
+
+            if self.dive_cd <= 0:
+                self._start_dive(player)
+                self.dive_cd = self.DIVE_CD
+
+        elif self.state == "dive":
+            self._update_dive(player)
+        elif self.state == "return":
+            self._update_return()
+
+    def draw(self, surface, cam_x):
+        if not self.alive: return
+        for pl in self.pillars: pl.draw(surface, cam_x)
+        for proj in self.projectiles: proj.draw(surface, cam_x)
+
+        if self.hit_timer > 0 and self.hit_timer % 4 < 2:
+            return
+
+        sx = self.rect.x - cam_x
+        sy = self.rect.y
+        w  = self.rect.width
+        h  = self.rect.height
+
+        if SERAPH_HAS_PNG and SERAPH_FRAMES_R:
+            frames = SERAPH_FRAMES_R if self._facing_right else SERAPH_FRAMES_L
+            img    = frames[int(self.wing_anim_idx) % len(frames)]
+            iw, ih = img.get_size()
+            surface.blit(img, (sx + w//2 - iw//2, sy + h//2 - ih//2))
+        else:
+            glow_a  = int(160 + 60 * math.sin(self.glow_phase))
+            body_s  = pygame.Surface((w, h), pygame.SRCALPHA)
+            pygame.draw.ellipse(body_s, (*C_HOLY, glow_a), (8, 20, w-16, h-20))
+            pygame.draw.circle(body_s, (*C_WHITE, glow_a), (w//2, 12), 12)
+            pygame.draw.circle(body_s, (*C_GOLD, glow_a), (w//2, 8), 16, 2)
+            surface.blit(body_s, (sx, sy))
+
+            wing_beat = math.sin(self.wing_phase) * 0.3
+            for side in [-1, 1]:
+                wing_pts = [
+                    (sx + w//2, sy + 20),
+                    (sx + w//2 + side * int(55 + wing_beat * 15), sy - 10 + int(wing_beat * 20)),
+                    (sx + w//2 + side * int(35 + wing_beat * 8),  sy + 50),
+                ]
+                ws = pygame.Surface((w + 120, h + 40), pygame.SRCALPHA)
+                adj = [(p[0] - sx + 60, p[1] - sy + 20) for p in wing_pts]
+                pygame.draw.polygon(ws, (*C_HOLY, int(100 + 40 * abs(math.sin(self.wing_phase)))), adj)
+                pygame.draw.polygon(ws, (*C_GOLD, 80), adj, 2)
+                surface.blit(ws, (sx - 60, sy - 20))
+
+        bar_w = 60
+        bar_x = sx + w//2 - bar_w//2
+        bar_y = sy - 18
+        pygame.draw.rect(surface, (40, 20, 60), (bar_x, bar_y, bar_w, 6), border_radius=3)
+        fill = int(bar_w * self.hp / self.MAX_HP)
+        pygame.draw.rect(surface, C_GOLD,        (bar_x, bar_y, fill,  6), border_radius=3)
+
+    def draw_light(self, light_layer, cam_x):
+        if not self.alive: return
+        gx = int(self.rect.centerx - cam_x)
+        gy = int(self.rect.centery)
+        intensity = int(30 + 15 * math.sin(self.glow_phase))
+        glow(light_layer, C_GOLD,  gx, gy, 110, intensity)
+        glow(light_layer, C_WHITE, gx, gy, 40,  intensity + 20)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  PLATFORM
+# ─────────────────────────────────────────────────────────────────────────────
+class Platform:
+    def __init__(self, x, y):
+        self.rect       = pygame.Rect(x, y, plat_frames[0].get_width(), 30)
+        self.anim_index = 0
+
+    def update(self, dt_mult=1.0):
+        self.anim_index = (self.anim_index + 0.15 * dt_mult) % 5
+
+    def draw(self, surface, cam_x):
+        surface.blit(plat_frames[int(self.anim_index)], (self.rect.x - cam_x, self.rect.y))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  BOSS DOOR
+# ─────────────────────────────────────────────────────────────────────────────
+class BossDoor:
+    def __init__(self, x, y):
+        self.rect       = pygame.Rect(x, y, 64, 120)
+        self.locked     = True
+        self.glow_phase = 0.0
+        self.rune_rot   = 0.0
+
+    def unlock(self):
+        self.locked = False
+
+    def update(self, dt_mult=1.0):
+        self.glow_phase += 0.06 * dt_mult
+        if not self.locked:
+            self.rune_rot = (self.rune_rot + 1.2 * dt_mult) % 360
+
+    def draw(self, surface, cam_x):
+        sx, sy = self.rect.x - cam_x, self.rect.y
+        g_val  = int(128 + 80 * math.sin(self.glow_phase))
+        col    = C_GREY if self.locked else (0, g_val, g_val)
+
+        pygame.draw.rect(surface, (30, 18, 45), (sx, sy, 64, 120), border_radius=6)
+        pygame.draw.rect(surface, col, (sx, sy, 64, 120), 3, border_radius=6)
+        pygame.draw.ellipse(surface, col, (sx, sy-16, 64, 32), 3)
+
+        if self.locked:
+            pygame.draw.rect(surface, C_GREY, (sx+22, sy+58, 20, 16), border_radius=3)
+            pygame.draw.arc(surface, C_GREY,  (sx+19, sy+42, 26, 26), 0, math.pi, 3)
+            txt = F_SM.render("LOCKED", True, C_GREY)
+            surface.blit(txt, (sx+32-txt.get_width()//2, sy-22))
+        else:
+            glow(surface, C_CYAN, sx+32, sy+60, 50, 40)
+            pygame.draw.circle(surface, (0, int(g_val*0.6), int(g_val*0.6)),
+                               (sx+32, sy+60), 22, 2)
+            rune_font = pygame.font.SysFont("couriernew", 18, bold=True)
+            glyphs = ["Ψ","∆","⊕","Ω"]
+            for i, g_ch in enumerate(glyphs):
+                ang = math.radians(self.rune_rot + i*90)
+                rx  = sx+32 + int(math.cos(ang)*18)
+                ry  = sy+60 + int(math.sin(ang)*18)
+                rs  = rune_font.render(g_ch, True, C_CYAN)
+                surface.blit(rs, (rx - rs.get_width()//2, ry - rs.get_height()//2))
+            prompt = F_SM.render("[E]  ENTER", True, C_CYAN)
+            surface.blit(prompt, (sx+32-prompt.get_width()//2, sy-22))
+
+    def draw_light(self, light_layer, cam_x):
+        if not self.locked:
+            sx = int(self.rect.centerx - cam_x)
+            sy = int(self.rect.centery)
+            glow(light_layer, C_CYAN, sx, sy, 120, 30)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FLOOR DOOR  (advances player from floor 1 → floor 2)
+# ─────────────────────────────────────────────────────────────────────────────
+class FloorDoor:
+    def __init__(self, x, y):
+        self.rect       = pygame.Rect(x, y, 56, 100)
+        self.locked     = True
+        self.glow_phase = 0.0
+        self.rune_rot   = 0.0
+
+    def unlock(self):
+        self.locked = False
+
+    def update(self, dt_mult=1.0):
+        self.glow_phase += 0.07 * dt_mult
+        if not self.locked:
+            self.rune_rot = (self.rune_rot + 1.5 * dt_mult) % 360
+
+    def draw(self, surface, cam_x):
+        sx, sy = self.rect.x - cam_x, self.rect.y
+        g_val  = int(128 + 80 * math.sin(self.glow_phase))
+        col    = C_GREY if self.locked else (g_val, int(g_val * 0.6), 0)
+
+        pygame.draw.rect(surface, (25, 18, 10), (sx, sy, 56, 100), border_radius=5)
+        pygame.draw.rect(surface, col, (sx, sy, 56, 100), 3, border_radius=5)
+        pygame.draw.ellipse(surface, col, (sx, sy - 14, 56, 28), 3)
+
+        if self.locked:
+            pygame.draw.rect(surface, C_GREY, (sx+18, sy+50, 20, 16), border_radius=3)
+            pygame.draw.arc(surface,  C_GREY, (sx+15, sy+36, 26, 26), 0, math.pi, 3)
+            txt = F_SM.render("LOCKED", True, C_GREY)
+            surface.blit(txt, (sx+28 - txt.get_width()//2, sy - 20))
+        else:
+            glow(surface, C_ORANGE, sx+28, sy+50, 45, 40)
+            prompt = F_SM.render("[E] DESCEND", True, C_ORANGE)
+            surface.blit(prompt, (sx+28 - prompt.get_width()//2, sy - 20))
+            rune_font2 = pygame.font.SysFont("couriernew", 16, bold=True)
+            for i, g_ch in enumerate(["↓","↓"]):
+                ang = math.radians(self.rune_rot + i * 180)
+                rx  = sx+28 + int(math.cos(ang)*14)
+                ry  = sy+50 + int(math.sin(ang)*14)
+                rs  = rune_font2.render(g_ch, True, C_ORANGE)
+                surface.blit(rs, (rx - rs.get_width()//2, ry - rs.get_height()//2))
+
+    def draw_light(self, light_layer, cam_x):
+        if not self.locked:
+            sx = int(self.rect.centerx - cam_x)
+            sy = int(self.rect.centery)
+            glow(light_layer, C_ORANGE, sx, sy, 100, 28)
+
+# ─────────────────────────────────────────────────────────────────────────────
+class BossKey:
+    TOTAL = 5
+    def __init__(self, x, y):
+        self.x, self.y   = float(x), float(y)
+        self.base_y      = float(y)
+        self.bob_phase   = random.uniform(0, math.pi * 2)
+        self.collected   = False
+        self.rect        = pygame.Rect(x - 10, y - 10, 20, 20)
+        self.glow_phase  = random.uniform(0, math.pi * 2)
+
+    def update(self):
+        self.bob_phase  += 0.06
+        self.glow_phase += 0.08
+        self.y = self.base_y + math.sin(self.bob_phase) * 6
+        self.rect.centerx = int(self.x)
+        self.rect.centery  = int(self.y)
+
+    def draw(self, surface, cam_x):
+        if self.collected: return
+        sx = int(self.x - cam_x)
+        sy = int(self.y)
+        ga = int(160 + 80 * math.sin(self.glow_phase))
+        gs = pygame.Surface((34, 34), pygame.SRCALPHA)
+        pygame.draw.circle(gs, (*C_GOLD, ga // 3), (17, 17), 17)
+        surface.blit(gs, (sx - 17, sy - 17))
+        pygame.draw.circle(surface, C_GOLD,  (sx, sy - 4), 7)
+        pygame.draw.circle(surface, C_VOID,  (sx, sy - 4), 4)
+        pygame.draw.rect(surface,   C_GOLD,  (sx - 2, sy + 2, 4, 10))
+        pygame.draw.rect(surface,   C_GOLD,  (sx,     sy + 5, 5, 2))
+        pygame.draw.rect(surface,   C_GOLD,  (sx,     sy + 9, 4, 2))
+        lbl = F_SM.render("KEY", True, C_GOLD)
+        surface.blit(lbl, (sx - lbl.get_width()//2, sy - 22))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  BOSS
+# ─────────────────────────────────────────────────────────────────────────────
+class Boss:
+    MAX_HP = 15
+    P2_THRESHOLD = 10
+    P3_THRESHOLD = 5
+    MELEE_RANGE  = 120
+    MELEE_CD     = 55
+    MELEE_DUR    = 18
+    CHARGE_SPEED = 8
+
+    def __init__(self, x, y):
+        self.phases      = {}
+        self.phases_left = {}
+        target_h = 200
+        for p in [1, 2, 3]:
+            frames = []
+            for i in range(1, 6):
+                filename = f"boss_p{p}_walk{i}.png"
+                try:
+                    img = pygame.image.load(filename).convert_alpha()
+                except:
+                    try:
+                        img = pygame.image.load(f"boss_p1_walk{i}.png").convert_alpha()
+                    except:
+                        img = pygame.Surface((100, 100), pygame.SRCALPHA)
+                        col = {1:(255,215,0,150), 2:(255,140,0,150), 3:(200,40,40,180)}[p]
+                        img.fill(col)
+                w = int(img.get_width() * (target_h / img.get_height()))
+                frames.append(pygame.transform.smoothscale(img, (w, target_h)))
+            self.phases[p]      = frames
+            self.phases_left[p] = [pygame.transform.flip(f, True, False) for f in frames]
+
+        self.hp          = self.MAX_HP
+        self.is_alive    = True
+        self.death_timer = 120
+        self.hit_timer   = 0.0
+        self.pos         = pygame.Vector2(x, y)
+        self.vel         = pygame.Vector2(0, 0)
+        self.rect        = self.phases[1][0].get_rect(topleft=(x, y))
+        self.anim_index  = 0.0
+        
+        # Wide patrol bounds so he has free reign of the arena
+        self.patrol_left  = x - 1000
+        self.patrol_right = x + 1000
+        self.direction   = -1
+        self.image       = self.phases[1][0]
+        self.shoot_timer = 80.0
+        self.projectiles = []
+
+        self._phase2_announced = False
+        self._phase3_announced = False
+        self.phase_flash       = 0
+
+        self.keys_list      = []
+        self.keys_collected = 0
+        self.p2_vulnerable  = False
+
+        self.melee_timer  = 0.0
+        self.melee_active = 0
+        self.charging     = False
+        self.charge_timer = 0.0
+        self.CHARGE_CD    = 180.0
+        self.boss_adds    = []
+        self.spawn_timer  = 400.0
+
+    @property
+    def current_phase(self):
+        if self.hp > self.P2_THRESHOLD: return 1
+        if self.hp > self.P3_THRESHOLD: return 2
+        return 3
+
+    def _spawn_keys(self):
+        self.keys_list      = []
+        self.keys_collected = 0
+        self.p2_vulnerable  = False
+        # Calculate key spawn based on original spawn center, not moving patrol bounds
+        arena_cx = 4600  
+        spread   = 600
+        n = BossKey.TOTAL
+        for i in range(n):
+            kx = arena_cx - spread//2 + (spread//(n-1))*i + random.randint(-40, 40)
+            self.keys_list.append(BossKey(kx, 475))
+
+    def _fire(self, player, count=1, spread_deg=0):
+        ox, oy = self.rect.centerx, self.rect.centery
+        dx, dy = player.rect.centerx - ox, player.rect.centery - oy
+        base_angle = math.atan2(dy, dx)
+        for i in range(count):
+            angle = base_angle + math.radians(spread_deg * (i - (count-1)/2))
+            vx = math.cos(angle) * 6
+            vy = math.sin(angle) * 6
+            self.projectiles.append(
+                Projectile(ox, oy, vx, vy, (255, 200, 50), 12, shooter=self, proj_type="flaming_gold"))
+
+    def _check_hits(self, player):
+        if not (player.is_attacking and player.attack_timer == 14):
+            return
+        slash = pygame.Rect(0, 0, 160, 160)
+        if player.facing_right: slash.midleft  = player.rect.midright
+        else:                   slash.midright = player.rect.midleft
+        if not slash.colliderect(self.rect):
+            return
+        if self.current_phase == 2 and not self.p2_vulnerable:
+            announce("COLLECT ALL KEYS FIRST!", C_RED, 80)
+            return
+        self.hp       -= 1
+        self.hit_timer = 14.0
+        spawn_particles(self.rect.centerx, self.rect.centery, 16,
+                        [C_GOLD, C_ORANGE, C_WHITE], speed=5,
+                        size_range=(2, 7), life_range=(10, 28))
+        if self.hp <= 0:
+            self.is_alive = False
+
+    def _move_chase(self, player, dt_mult, speed):
+        dx = player.rect.centerx - self.rect.centerx
+        if abs(dx) > 5:
+            self.direction = 1 if dx > 0 else -1
+            self.pos.x += speed * self.direction * dt_mult
+            
+        if self.pos.x < self.patrol_left:  self.pos.x = self.patrol_left
+        if self.pos.x > self.patrol_right: self.pos.x = self.patrol_right
+        self.rect.x = int(self.pos.x)
+
+    def update(self, player, platforms, dt_mult=1.0):
+        if not self.is_alive:
+            if self.death_timer > 0: self.death_timer -= dt_mult
+            return
+        if self.hit_timer  > 0: self.hit_timer  -= dt_mult
+        if self.phase_flash > 0: self.phase_flash -= 1
+        if self.melee_active > 0: self.melee_active -= 1
+
+        ph = self.current_phase
+
+        if ph == 2 and not self._phase2_announced:
+            self._phase2_announced = True
+            self.phase_flash = 50
+            announce("— PHASE II —  FIND THE SCATTERED KEYS!", C_ORANGE, 200)
+            spawn_particles(self.rect.centerx, self.rect.centery, 40,
+                            [C_GOLD, C_ORANGE, C_WHITE], speed=7,
+                            size_range=(3, 9), life_range=(18, 45))
+            self._spawn_keys()
+
+        if ph == 3 and not self._phase3_announced:
+            self._phase3_announced = True
+            self.phase_flash = 70
+            self.p2_vulnerable = True
+            announce("PHASE III — THE INKWARDEN UNLEASHED!", C_RED, 220)
+            spawn_particles(self.rect.centerx, self.rect.centery, 60,
+                            [C_RED, C_ORANGE, C_GOLD, C_PURPLE], speed=9,
+                            size_range=(4, 10), life_range=(22, 55))
+            self.melee_timer  = float(self.MELEE_CD)
+            self.charge_timer = float(self.CHARGE_CD)
+
+        self.vel.y = min(self.vel.y + 0.8 * dt_mult, 20)
+        self.pos.y += self.vel.y * dt_mult
+        self.rect.y = int(self.pos.y)
+        if self.rect.bottom >= 500:
+            self.rect.bottom = 500
+            self.pos.y = float(self.rect.y)
+            self.vel.y = 0
+
+        if ph == 1:
+            self._move_chase(player, dt_mult, speed=2.5)
+            self.shoot_timer -= dt_mult
+            if self.shoot_timer <= 0:
+                self.shoot_timer = 100.0
+                self._fire(player)
+
+        elif ph == 2:
+            self._move_chase(player, dt_mult, speed=1.8)
+            for k in self.keys_list:
+                k.update()
+                if not k.collected and k.rect.colliderect(player.rect):
+                    k.collected = True
+                    self.keys_collected += 1
+                    spawn_particles(int(k.x), int(k.y), 18,
+                                    [C_GOLD, C_WHITE, C_CYAN], speed=4,
+                                    gravity=-0.1, size_range=(2, 6), life_range=(10, 26))
+                    remaining = BossKey.TOTAL - self.keys_collected
+                    if remaining == 0:
+                        self.p2_vulnerable = True
+                        announce("ALL KEYS FOUND — STRIKE NOW!", C_CYAN, 120)
+                    else:
+                        announce(f"KEY {self.keys_collected}/{BossKey.TOTAL} — {remaining} REMAINING", C_GOLD, 80)
+            self.shoot_timer -= dt_mult
+            if self.shoot_timer <= 0:
+                self.shoot_timer = 160.0
+                self._fire(player, count=3, spread_deg=18)
+
+        elif ph == 3:
+            self.p2_vulnerable = True
+            self.charge_timer -= dt_mult
+            if self.charge_timer <= 0:
+                self.charge_timer = float(self.CHARGE_CD)
+                self.charging = True
+            if self.charging:
+                cdx = 1 if player.rect.x > self.rect.x else -1
+                self.direction = cdx
+                self.pos.x += self.CHARGE_SPEED * cdx * dt_mult
+                self.rect.x = int(self.pos.x)
+                if abs(player.rect.centerx - self.rect.centerx) < 80:
+                    self.charging = False
+                    spawn_particles(self.rect.centerx, self.rect.bottom, 24,
+                                    [C_RED, C_ORANGE, C_GOLD], speed=6,
+                                    spread=math.pi, direction=-math.pi/2,
+                                    gravity=0.2, size_range=(3, 8), life_range=(10, 28))
+            else:
+                self._move_chase(player, dt_mult, speed=4)
+            self.melee_timer -= dt_mult
+            if self.melee_timer <= 0:
+                self.melee_timer  = float(self.MELEE_CD)
+                self.melee_active = self.MELEE_DUR
+                spawn_particles(self.rect.centerx, self.rect.centery, 12,
+                                [C_RED, C_ORANGE], speed=5,
+                                size_range=(3, 7), life_range=(8, 20))
+            if self.melee_active > 0:
+                melee_rect = pygame.Rect(0, 0, 140, 100)
+                if self.direction > 0: melee_rect.midleft  = self.rect.midright
+                else:                  melee_rect.midright = self.rect.midleft
+                if melee_rect.colliderect(player.rect):
+                    player.take_damage()
+            self.shoot_timer -= dt_mult
+            if self.shoot_timer <= 0:
+                self.shoot_timer = 45.0
+                self._fire(player, count=2, spread_deg=14)
+            self.spawn_timer -= dt_mult
+            if self.spawn_timer <= 0:
+                self.spawn_timer = 400.0
+                # Spawn adds relative to boss position
+                lx = int(self.pos.x) - 150
+                rx = int(self.pos.x) + 150
+                self.boss_adds.append(Grunt(lx, 350, lx-50, lx+150))
+                self.boss_adds.append(Grunt(rx, 350, rx-150, rx+50))
+                spawn_particles(self.rect.centerx, self.rect.centery, 20,
+                                [C_PURPLE, C_RUNEGLOW])
+
+        for add in self.boss_adds:
+            add.update(player, platforms, dt_mult)
+        self.boss_adds = [a for a in self.boss_adds if a.alive]
+
+        self._check_hits(player)
+        for proj in self.projectiles: proj.update(player, dt_mult)
+        self.projectiles = [p for p in self.projectiles if p.alive]
+
+        self.anim_index = (self.anim_index + 0.1 * dt_mult) % 5
+        frame_list = self.phases_left[ph] if self.direction > 0 else self.phases[ph]
+        self.image = frame_list[int(self.anim_index)]
+
+    def draw(self, surface, cam_x):
+        for proj in self.projectiles: proj.draw(surface, cam_x)
+        for add  in self.boss_adds:   add.draw(surface, cam_x)
+        for k    in self.keys_list:   k.draw(surface, cam_x)
+
+        if not self.is_alive and self.death_timer <= 0: return
+
+        if self.phase_flash > 0:
+            alpha   = int(200 * self.phase_flash / 70)
+            flash_s = pygame.Surface(self.rect.size, pygame.SRCALPHA)
+            col     = C_ORANGE if self.current_phase == 2 else C_RED
+            flash_s.fill((*col, alpha))
+            surface.blit(flash_s, (self.rect.x - cam_x, self.rect.y))
+
+        if self.melee_active > 0:
+            ma_s = pygame.Surface((180, 120), pygame.SRCALPHA)
+            a_arc = int(200 * self.melee_active / self.MELEE_DUR)
+            pygame.draw.arc(ma_s, (*C_RED, a_arc), (0, 0, 180, 120),
+                            -math.pi/3, math.pi/3, 8)
+            if self.direction > 0:
+                surface.blit(ma_s, (self.rect.right - int(cam_x) - 10, self.rect.centery - 60))
+            else:
+                surface.blit(pygame.transform.flip(ma_s, True, False),
+                             (self.rect.left - int(cam_x) - 170, self.rect.centery - 60))
+
+        if self.current_phase == 2 and not self.p2_vulnerable:
+            shield_a = int(120 + 60 * math.sin(pygame.time.get_ticks() * 0.006))
+            sh_s = pygame.Surface((self.rect.width + 20, self.rect.height + 20), pygame.SRCALPHA)
+            pygame.draw.ellipse(sh_s, (*C_GOLD, shield_a),
+                                (0, 0, self.rect.width + 20, self.rect.height + 20), 4)
+            surface.blit(sh_s, (self.rect.x - int(cam_x) - 10, self.rect.y - 10))
+
+        if self.hit_timer > 0 and int(self.hit_timer) % 4 < 2:
+            return
+        surface.blit(self.image, (self.rect.x - int(cam_x), self.rect.y))
+
+    def draw_light(self, light_layer, cam_x):
+        if not self.is_alive: return
+        ph   = self.current_phase
+        cols = {1: (255,215,0), 2: (255,140,0), 3: (220,40,40)}
+        glow(light_layer, cols[ph],
+             int(self.rect.centerx - cam_x), int(self.rect.centery),
+             180 + ph * 20, 40)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  REAPER  (with Void Blink — Q key)
+# ─────────────────────────────────────────────────────────────────────────────
+class Reaper:
+    DASH_DIST = 280
+    DASH_CD   = 90
+    DASH_DUR  = 8
+
+    BLINK_CD  = 120
+    BLINK_MAX_DIST = 380
+
+    def __init__(self, x, y):
+        self.run_frames_right = []
+        target_h = 75
+
+        for i in range(1, 6):
+            try:
+                img = pygame.image.load(f"run{i}.png").convert_alpha()
+                w   = int(img.get_width() * (target_h / img.get_height()))
+                self.run_frames_right.append(pygame.transform.smoothscale(img, (w, target_h)))
+            except:
+                fallback = pygame.Surface((40, target_h), pygame.SRCALPHA)
+                fallback.fill((240, 235, 255, 200))
+                self.run_frames_right.append(fallback)
+
+        self.run_frames_left = [pygame.transform.flip(i, True, False)
+                                 for i in self.run_frames_right]
+
+        try:
+            s_img = pygame.image.load("slash.png").convert_alpha()
+            target_slash_h = 60
+            scale_ratio = target_slash_h / max(1, s_img.get_height())
+            sw = int(s_img.get_width() * scale_ratio)
+            self.slash_orig = pygame.transform.smoothscale(s_img, (sw, target_slash_h))
+        except:
+            self.slash_orig = pygame.Surface((30, 60), pygame.SRCALPHA)
+            pygame.draw.ellipse(self.slash_orig, (255, 255, 255, 180), (0, 0, 30, 60))
+
+        self.image = self.run_frames_right[0]
+        self.rect  = self.image.get_rect(topleft=(x, y))
+        self.pos   = pygame.Vector2(x, y)
+        self.vel   = pygame.Vector2(0, 0)
+        self.facing_right = True
+
+        self.is_attacking  = False
+        self.attack_timer  = 0
+        self.attack_cd     = 0
+        self.ATTACK_CD     = 18
+        self.attack_hit_landed = False
+        
+        self.is_ulting = False
+        self.ult_timer = 0
+        self.ult_cd = 0
+        self.ULT_CD = 600  
+        self.ULT_DUR = 25
+        self.ult_hit_landed = False
+
+        self.current_frame = 0.0
+
+        self.hp        = 5
+        self.max_hp    = 5
+        self.invincible = 0
+        self.alive     = True
+
+        self.dashing    = False
+        self.dash_timer = 0
+        self.dash_cd    = 0
+        self.dash_dir   = pygame.Vector2(1, 0)
+        self.afterimages = []
+        self._ai_cnt    = 0
+
+        self.blink_cd       = 0
+        self.blink_charging = False
+
+        self.PARRY_WINDOW   = 12
+        self.PARRY_CD       = 55
+        self.parry_timer    = 0
+        self.parry_cd       = 0
+        self.parry_success  = 0
+
+    def _do_blink(self, cam_x):
+        audio.play_sfx("blink", 0.7)
+        mx, my = pygame.mouse.get_pos()
+        world_x = mx + cam_x
+        world_y = my
+
+        dx = world_x - self.rect.centerx
+        dy = world_y - self.rect.centery
+        dist = math.hypot(dx, dy)
+        if dist > self.BLINK_MAX_DIST:
+            scale = self.BLINK_MAX_DIST / dist
+            dx   *= scale
+            dy   *= scale
+
+        dest_x = self.rect.centerx + dx - self.rect.width  // 2
+        dest_y = self.rect.centery + dy - self.rect.height // 2
+
+        dest_y = min(dest_y, 500 - self.rect.height)
+
+        void_tears.append(VoidTear(self.rect.centerx, self.rect.centery, C_PURPLE))
+        spawn_particles(self.rect.centerx, self.rect.centery, 18,
+                        [C_PURPLE, C_CYAN, C_RUNEGLOW],
+                        speed=5, gravity=-0.05,
+                        size_range=(2, 6), life_range=(8, 22))
+
+        self.pos.x = dest_x
+        self.pos.y = dest_y
+        self.rect.topleft = (int(self.pos.x), int(self.pos.y))
+
+        void_tears.append(VoidTear(self.rect.centerx, self.rect.centery, C_CYAN))
+        spawn_particles(self.rect.centerx, self.rect.centery, 18,
+                        [C_CYAN, C_PURPLE, C_WHITE],
+                        speed=5, gravity=-0.05,
+                        size_range=(2, 6), life_range=(8, 22))
+
+        for _ in range(3):
+            self.afterimages.append(Afterimage(self.image, self.rect.x, self.rect.y))
+
+        self.blink_cd   = self.BLINK_CD
+        self.invincible = max(self.invincible, 12)
+
+        import builtins
+        _grunts  = globals().get('grunts',  [])
+        _seraphs = globals().get('seraphs', [])
+        _boss    = globals().get('boss',    None)
+        
+        all_enemies = list(_grunts) + list(_seraphs)
+        if _boss and _boss.is_alive:         
+            all_enemies.extend(_boss.boss_adds) 
+
+        for e in all_enemies:
+            if e.alive and self.rect.colliderect(e.rect):
+                if isinstance(e, Seraph):
+                    e.hp -= 5
+                    e.hit_timer = 20
+                    spawn_particles(e.rect.centerx, e.rect.centery, 28,
+                                    [C_GOLD, C_CYAN, C_WHITE, C_HOLY], speed=7, size_range=(3, 8), life_range=(16, 36))
+                else:
+                    e.hp = 0
+                    spawn_particles(e.rect.centerx, e.rect.centery, 20,
+                                    [C_PURPLE, C_CYAN, C_WHITE], speed=6, size_range=(3, 7), life_range=(14, 32))
+                    if self.hp < self.max_hp: self.hp += 1
+                
+                if e.hp <= 0:
+                    e.alive = False
+
+        # Boss handled safely by itself to prevent looping errors
+        if _boss and _boss.is_alive and self.rect.colliderect(_boss.rect):
+            if _boss.current_phase == 2 and not _boss.p2_vulnerable:
+                announce("COLLECT ALL KEYS FIRST!", C_RED, 80)
+            else:
+                _boss.hp -= 5
+                _boss.hit_timer = 20
+                spawn_particles(_boss.rect.centerx, _boss.rect.centery, 35,
+                                [C_GOLD, C_CYAN, C_WHITE, C_PURPLE], speed=8, size_range=(4, 9), life_range=(16, 36))
+                if _boss.hp <= 0:
+                    _boss.is_alive = False
+
+    def try_parry(self, projectiles_lists):
+        if self.parry_timer <= 0:
+            return
+        PARRY_W, PARRY_H = 80, 80
+        parry_box = pygame.Rect(0, 0, PARRY_W, PARRY_H)
+        if self.facing_right:
+            parry_box.midleft = self.rect.midright
+        else:
+            parry_box.midright = self.rect.midleft
+        parry_box.centery  = self.rect.centery
+
+        for proj_list in projectiles_lists:
+            for proj in proj_list:
+                if not proj.alive or proj.parried:
+                    continue
+                if parry_box.collidepoint(proj.pos.x, proj.pos.y):
+                    proj.deflect()
+                    self.parry_success = 20
+                    self.invincible    = max(self.invincible, 20)
+                    spawn_particles(int(proj.pos.x), int(proj.pos.y), 18,
+                                    [C_CYAN, C_WHITE, C_GOLD],
+                                    speed=5, gravity=-0.05,
+                                    size_range=(3, 7), life_range=(10, 25))
+                    globals()['hit_stop_timer'] = 4.0
+
+    def take_damage(self):
+        if self.invincible > 0 or not self.alive: return
+        audio.play_sfx("hit", 0.8)
+        
+        if self.dashing and self.dash_timer >= (self.DASH_DUR - 5):
+            self.invincible = max(self.invincible, self.DASH_DUR + 10)
+            globals()['time_scale']        = 0.3
+            globals()['bullet_time_timer'] = 60
+            spawn_particles(self.rect.centerx, self.rect.centery, 22,
+                            [C_CYAN, C_WHITE, C_PURPLE],
+                            speed=6, gravity=-0.05,
+                            size_range=(3, 7), life_range=(12, 30))
+            return
+
+        self.hp -= 1
+        self.invincible = 60
+        spawn_particles(self.rect.centerx, self.rect.centery, 16,
+                        [C_RED, C_PARCH, C_WHITE],
+                        speed=4, gravity=0.4, size_range=(2,6), life_range=(10,28))
+        if self.hp <= 0: self.alive = False
+
+    def update(self, keys, platforms, cam_x=0, dt_mult=1.0):
+        if not self.alive: return
+        if self.invincible   > 0: self.invincible   -= 1 * dt_mult
+        if self.dash_cd      > 0: self.dash_cd      -= 1 * dt_mult
+        if self.blink_cd     > 0: self.blink_cd     -= 1 * dt_mult
+        if self.parry_cd     > 0: self.parry_cd     -= 1 * dt_mult
+        if self.parry_success> 0: self.parry_success -= 1 * dt_mult
+        if self.ult_cd       > 0: self.ult_cd       -= 1 * dt_mult
+
+        if self.parry_timer > 0:
+            self.parry_timer -= 1 * dt_mult
+            if self.parry_timer <= 0:
+                audio.stop_sfx("parry") 
+
+        if self.attack_cd > 0: self.attack_cd -= 1 * dt_mult
+
+        if keys[pygame.K_f] and not self.is_attacking and not self.is_ulting and self.attack_cd <= 0:
+            self.is_attacking      = True
+            self.attack_timer      = float(self.ATTACK_CD)
+            self.attack_hit_landed = False
+            px2 = self.rect.right if self.facing_right else self.rect.left
+            spawn_particles(px2, self.rect.centery, 12, [C_PARCH, C_WHITE], speed=5)
+            audio.play_sfx("slash", 0.6)
+            
+        if self.is_attacking:
+            self.attack_timer -= 1 * dt_mult
+            if not self.attack_hit_landed and self.attack_timer <= self.ATTACK_CD * 0.5:
+                self.attack_hit_landed = True
+                self._do_attack_damage()
+            if self.attack_timer <= 0:
+                self.is_attacking = False
+                self.attack_cd    = self.ATTACK_CD
+
+        if keys[pygame.K_c] and not self.is_ulting and not self.is_attacking and self.ult_cd <= 0:
+            self.is_ulting      = True
+            self.ult_timer      = float(self.ULT_DUR)
+            self.ult_hit_landed = False
+            px2 = self.rect.right if self.facing_right else self.rect.left
+            spawn_particles(px2, self.rect.centery, 25, [C_RED, C_ORANGE, C_GOLD], speed=8)
+            audio.play_sfx("slash", 0.9)
+            
+        if self.is_ulting:
+            self.ult_timer -= 1 * dt_mult
+            if not self.ult_hit_landed and self.ult_timer <= self.ULT_DUR * 0.5:
+                self.ult_hit_landed = True
+                self._do_ult_damage()
+            if self.ult_timer <= 0:
+                self.is_ulting = False
+                self.ult_cd    = self.ULT_CD
+
+        if keys[pygame.K_g] and self.parry_cd <= 0 and not self.is_attacking and not self.is_ulting:
+            self.parry_timer = self.PARRY_WINDOW
+            self.parry_cd    = self.PARRY_CD
+            spawn_particles(self.rect.centerx, self.rect.centery, 8,
+                            [C_CYAN, C_WHITE], speed=3, gravity=-0.05,
+                            size_range=(2, 5), life_range=(6, 14))
+            audio.play_sfx("parry", 0.8)
+            
+        if keys[pygame.K_q] and self.blink_cd <= 0 and not self.dashing:
+            self._do_blink(cam_x)
+
+        if keys[pygame.K_e] and not self.dashing and self.dash_cd <= 0:
+            self._start_dash(keys)
+            audio.play_sfx("dash", 0.6)
+            
+        if self.dashing:
+            self.dash_timer -= 1
+            self._ai_cnt += 1
+            if self._ai_cnt % 2 == 0:
+                self.afterimages.append(Afterimage(self.image, self.rect.x, self.rect.y))
+            spawn_particles(self.rect.centerx, self.rect.centery, 4,
+                            [C_PURPLE, C_CYAN, C_RUNEGLOW],
+                            speed=3, gravity=-0.05,
+                            size_range=(2,6), life_range=(5,15))
+            if self.dash_timer <= 0:
+                self.dashing    = False
+                self.invincible = max(self.invincible, 8)
+
+        for ai in self.afterimages: ai.update()
+        self.afterimages = [ai for ai in self.afterimages if ai.alive]
+
+        if self.dashing:
+            step = self.dash_dir * (self.DASH_DIST / self.DASH_DUR)
+            self.pos += step
+            self.rect.topleft = (int(self.pos.x), int(self.pos.y))
+            if self.rect.bottom > 500:
+                self.rect.bottom = 500
+                self.pos.y = self.rect.y
+            return
+
+        move_x = 0
+        if keys[pygame.K_LEFT]  or keys[pygame.K_a]: move_x -= 5 * dt_mult; self.facing_right = False
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: move_x += 5 * dt_mult; self.facing_right = True
+
+        self.pos.x += move_x
+        self.rect.x = int(self.pos.x)
+        for p in platforms:
+            if self.rect.colliderect(p.rect):
+                if move_x > 0: self.rect.right = p.rect.left
+                if move_x < 0: self.rect.left  = p.rect.right
+                self.pos.x = self.rect.x
+
+        self.vel.y  = min(self.vel.y + 0.8 * dt_mult, 20)
+        self.pos.y += self.vel.y * dt_mult
+        self.rect.y = int(self.pos.y)
+
+        on_ground = False
+        if self.rect.bottom >= 500:
+            self.rect.bottom = 500; self.pos.y = self.rect.y; self.vel.y = 0; on_ground = True
+        for p in platforms:
+            if self.rect.colliderect(p.rect):
+                if self.vel.y > 0:
+                    self.rect.bottom = p.rect.top; self.vel.y = 0; on_ground = True
+                elif self.vel.y < 0:
+                    self.rect.top = p.rect.bottom; self.vel.y = 0
+                self.pos.y = self.rect.y
+
+        if on_ground and (keys[pygame.K_SPACE] or keys[pygame.K_w]):
+            self.vel.y = -16
+
+        if move_x != 0:
+            self.current_frame = (self.current_frame + 0.2) % 5
+            imgs = self.run_frames_right if self.facing_right else self.run_frames_left
+            self.image = imgs[int(self.current_frame)]
+        else:
+            self.image = self.run_frames_right[0] if self.facing_right else self.run_frames_left[0]
+
+    def _do_attack_damage(self):
+        slash_hitbox = pygame.Rect(0, 0, 90, 100)
+        if self.facing_right:
+            slash_hitbox.midleft  = self.rect.center
+        else:
+            slash_hitbox.midright = self.rect.center
+
+        _grunts  = globals().get('grunts',  [])
+        _seraphs = globals().get('seraphs', [])
+        _boss    = globals().get('boss',    None)
+        
+        all_enemies = list(_grunts) + list(_seraphs)
+        if _boss and _boss.is_alive:
+            all_enemies.extend(_boss.boss_adds)
+
+        for e in all_enemies:
+            if e.alive and slash_hitbox.colliderect(e.rect):
+                e.hp -= 3 
+                if isinstance(e, Seraph):
+                    e.hit_timer = 14
+                    spawn_particles(e.rect.centerx, e.rect.centery, 12,
+                                    [C_GOLD, C_WHITE, C_HOLY], speed=4, size_range=(2, 5), life_range=(8, 20))
+                else:
+                    spawn_particles(e.rect.centerx, e.rect.centery, 10,
+                                    [(180, 120, 255), (255, 255, 255)], speed=4, size_range=(2, 5), life_range=(8, 20))
+                                    
+                if e.hp <= 0:
+                    e.alive = False
+                    if isinstance(e, Seraph):
+                        spawn_particles(e.rect.centerx, e.rect.centery, 30,
+                                        [C_GOLD, C_WHITE, C_HOLY, C_RUNEGLOW], speed=5, size_range=(3, 8), life_range=(20, 50))
+
+        if _boss and _boss.is_alive and slash_hitbox.colliderect(_boss.rect):
+            if _boss.current_phase == 2 and not _boss.p2_vulnerable:
+                announce("COLLECT ALL KEYS FIRST!", C_RED, 80)
+            else:
+                _boss.hp       -= 3 
+                _boss.hit_timer = 14.0
+                spawn_particles(_boss.rect.centerx, _boss.rect.centery, 16,
+                                [C_GOLD, C_ORANGE, C_WHITE], speed=5,
+                                size_range=(2, 7), life_range=(10, 28))
+                if _boss.hp <= 0:
+                    _boss.is_alive = False
+
+    def _do_ult_damage(self):
+        slash_hitbox = pygame.Rect(0, 0, 300, 250) 
+        if self.facing_right:
+            slash_hitbox.midleft = self.rect.center
+        else:
+            slash_hitbox.midright = self.rect.center
+
+        _grunts  = globals().get('grunts',  [])
+        _seraphs = globals().get('seraphs', [])
+        _boss    = globals().get('boss',    None)
+        
+        all_enemies = list(_grunts) + list(_seraphs)
+        if _boss and _boss.is_alive:
+            all_enemies.extend(_boss.boss_adds)
+
+        for e in all_enemies:
+            if e.alive and slash_hitbox.colliderect(e.rect):
+                e.hp -= 6 
+                spawn_particles(e.rect.centerx, e.rect.centery, 30,
+                                [C_RED, C_GOLD, C_WHITE], speed=7, size_range=(3, 8), life_range=(15, 35))
+                                
+                if isinstance(e, Seraph):
+                    e.hit_timer = 20
+                if e.hp <= 0:
+                    e.alive = False
+
+        if _boss and _boss.is_alive and slash_hitbox.colliderect(_boss.rect):
+            if _boss.current_phase == 2 and not _boss.p2_vulnerable:
+                announce("COLLECT ALL KEYS FIRST!", C_RED, 80)
+            else:
+                _boss.hp -= 6 
+                _boss.hit_timer = 20.0
+                spawn_particles(_boss.rect.centerx, _boss.rect.centery, 40,
+                                [C_RED, C_GOLD, C_WHITE], speed=8,
+                                size_range=(4, 9), life_range=(15, 40))
+                if _boss.hp <= 0:
+                    _boss.is_alive = False
+
+    def _start_dash(self, keys):
+        dx, dy = 0, 0
+        if keys[pygame.K_RIGHT] or keys[pygame.K_d]: dx += 1
+        if keys[pygame.K_LEFT]  or keys[pygame.K_a]: dx -= 1
+        if keys[pygame.K_UP]    or keys[pygame.K_w]: dy -= 1
+        if keys[pygame.K_DOWN]  or keys[pygame.K_s]: dy += 1
+        if dx == 0 and dy == 0:
+            dx = 1 if self.facing_right else -1
+        ln = max(1, math.hypot(dx, dy))
+        self.dash_dir   = pygame.Vector2(dx/ln, dy/ln)
+        self.dashing    = True
+        self.dash_timer = self.DASH_DUR
+        self.dash_cd    = self.DASH_CD
+        self.invincible = self.DASH_DUR + 4
+        self._ai_cnt    = 0
+        for _ in range(4):
+            self.afterimages.append(Afterimage(self.image, self.rect.x, self.rect.y))
+
+    def draw(self, surface, cam_x):
+        for ai in self.afterimages: ai.draw(surface, cam_x)
+        if self.invincible > 0 and not self.dashing and self.invincible % 6 < 3:
+            return
+
+        if self.parry_success > 0:
+            ps_alpha = int(200 * self.parry_success / 20)
+            ps_r     = 55 + (20 - self.parry_success) * 2
+            ps_s     = pygame.Surface((ps_r * 2, ps_r * 2), pygame.SRCALPHA)
+            pygame.draw.circle(ps_s, (*C_CYAN, ps_alpha), (ps_r, ps_r), ps_r, 4)
+            surface.blit(ps_s,
+                         (self.rect.centerx - cam_x - ps_r,
+                          self.rect.centery - ps_r))
+
+        if self.parry_timer > 0:
+            PARRY_W, PARRY_H = 80, 80
+            shield_alpha = int(180 * self.parry_timer / self.PARRY_WINDOW)
+            sh_s = pygame.Surface((PARRY_W, PARRY_H), pygame.SRCALPHA)
+            pygame.draw.ellipse(sh_s, (*C_CYAN, shield_alpha),
+                                (0, 0, PARRY_W, PARRY_H))
+            pygame.draw.ellipse(sh_s, (*C_WHITE, min(255, shield_alpha + 60)),
+                                (0, 0, PARRY_W, PARRY_H), 3)
+            if self.facing_right:
+                sx = self.rect.right - cam_x
+            else:
+                sx = self.rect.left - cam_x - PARRY_W
+            sy = self.rect.centery - PARRY_H // 2
+            surface.blit(sh_s, (sx, sy))
+
+        surface.blit(self.image, (self.rect.x - cam_x, self.rect.y))
+        
+        if self.is_attacking:
+            progress = 1.0 - (self.attack_timer / self.ATTACK_CD)
+            
+            start_angle = -70 if self.facing_right else -110
+            end_angle = 20 if self.facing_right else 160
+            
+            current_angle = start_angle + (end_angle - start_angle) * progress
+            
+            if not self.facing_right:
+                flipped = pygame.transform.flip(self.slash_orig, True, False)
+                rotated_slash = pygame.transform.rotate(flipped, current_angle)
+            else:
+                rotated_slash = pygame.transform.rotate(self.slash_orig, -current_angle)
+            
+            alpha = 255 if progress < 0.7 else int(255 * (1.0 - progress) / 0.3)
+            rotated_slash.set_alpha(alpha)
+            
+            draw_x = self.rect.centerx - cam_x + (20 if self.facing_right else -20) - rotated_slash.get_width() // 2
+            draw_y = self.rect.centery - rotated_slash.get_height() // 2
+            
+            surface.blit(rotated_slash, (draw_x, draw_y))
+            
+        if self.is_ulting:
+            progress = 1.0 - (self.ult_timer / self.ULT_DUR)
+            
+            start_angle = -100 if self.facing_right else -80
+            end_angle = 45 if self.facing_right else 135
+            
+            current_angle = start_angle + (end_angle - start_angle) * progress
+            
+            scale_factor = 4.0 + math.sin(progress * math.pi) * 1.5
+            
+            sw = int(max(1, self.slash_orig.get_width() * scale_factor))
+            sh = int(max(1, self.slash_orig.get_height() * scale_factor))
+            scaled_slash = pygame.transform.smoothscale(self.slash_orig, (sw, sh)).copy()
+            
+            # Use BLEND_RGB_ADD to safely tint the image without ruining the transparent alpha background
+            scaled_slash.fill((200, 50, 0), special_flags=pygame.BLEND_RGB_ADD)
+            
+            if not self.facing_right:
+                flipped = pygame.transform.flip(scaled_slash, True, False)
+                rotated_slash = pygame.transform.rotate(flipped, current_angle)
+            else:
+                rotated_slash = pygame.transform.rotate(scaled_slash, -current_angle)
+            
+            alpha = 255 if progress < 0.7 else int(255 * (1.0 - progress) / 0.3)
+            rotated_slash.set_alpha(alpha)
+            
+            offset_x = 40 * math.cos(math.radians(current_angle))
+            offset_y = 40 * math.sin(math.radians(current_angle))
+            
+            draw_x = self.rect.centerx - cam_x + (40 if self.facing_right else -40) + offset_x - rotated_slash.get_width() // 2
+            draw_y = self.rect.centery + offset_y - rotated_slash.get_height() // 2
+            
+            surface.blit(rotated_slash, (draw_x, draw_y))
+
+    def draw_light(self, light_layer, cam_x):
+        sx, sy = int(self.rect.centerx - cam_x), int(self.rect.centery)
+        glow(light_layer, C_PARCH,  sx, sy, 90,  25)
+        if self.dashing:
+            glow(light_layer, C_CYAN,   sx, sy, 130, 40)
+        if self.blink_cd > self.BLINK_CD - 15:
+            glow(light_layer, C_PURPLE, sx, sy, 150, 50)
+
+    def draw_hud(self, surface):
+        bar_w = 200
+        bar_h = 16
+        bx, by = 30, 30
+        
+        pygame.draw.rect(surface, (20, 15, 25), (bx, by, bar_w, bar_h))
+        pygame.draw.rect(surface, (80, 80, 90), (bx-2, by-2, bar_w+4, bar_h+4), 2)
+        
+        fill_w = int(bar_w * (self.hp / self.max_hp))
+        if fill_w > 0:
+            pygame.draw.rect(surface, C_RED, (bx, by, fill_w, bar_h))
+        
+        seg_w = bar_w / self.max_hp
+        for i in range(1, self.max_hp):
+            pygame.draw.line(surface, (80, 80, 90), (bx + i*seg_w, by), (bx + i*seg_w, by + bar_h), 2)
+
+        hp_txt = F_MED.render(f"HP: {self.hp}/{self.max_hp}", True, C_WHITE)
+        surface.blit(hp_txt, (bx, by - 24))
+
+        ab_x = 30
+        ab_y = HEIGHT - 80
+        box_size = 40
+        spacing = 15
+        
+        abilities = [
+            ("Q", "BLINK", self.blink_cd, self.BLINK_CD, C_PURPLE),
+            ("E", "DASH", self.dash_cd, self.DASH_CD, C_CYAN),
+            ("G", "PARRY", self.parry_cd, self.PARRY_CD, C_GOLD if self.parry_timer > 0 else C_WHITE),
+            ("C", "ULT", self.ult_cd, self.ULT_CD, C_RED)
+        ]
+        
+        for i, (key, name, cd, max_cd, color) in enumerate(abilities):
+            cx = ab_x + (box_size + spacing) * i
+            cy = ab_y
+            
+            pygame.draw.rect(surface, (20, 15, 25, 180), (cx, cy, box_size, box_size))
+            
+            if cd > 0:
+                cd_ratio = cd / max_cd
+                h = int(box_size * cd_ratio)
+                pygame.draw.rect(surface, (0, 0, 0, 180), (cx, cy + box_size - h, box_size, h))
+                
+            pygame.draw.rect(surface, color if cd <= 0 else (60, 60, 70), (cx, cy, box_size, box_size), 2)
+            
+            key_txt = F_MED.render(key, True, color if cd <= 0 else (100, 100, 110))
+            surface.blit(key_txt, (cx + box_size//2 - key_txt.get_width()//2, cy + box_size//2 - key_txt.get_height()//2))
+            
+            name_txt = F_SM.render(name, True, color if cd <= 0 else (100, 100, 110))
+            surface.blit(name_txt, (cx + box_size//2 - name_txt.get_width()//2, cy - 20))
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AMBIENT INK MOTES
+# ─────────────────────────────────────────────────────────────────────────────
+class InkMote:
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.x        = random.randint(0, WIDTH)
+        self.y        = random.uniform(50, HEIGHT-80)
+        self.vy       = random.uniform(-0.3, -0.8)
+        self.vx       = random.uniform(-0.2, 0.2)
+        self.alpha    = random.randint(20, 80)
+        self.size     = random.randint(1, 4)
+        self.life     = random.randint(120, 400)
+        self.max_life = self.life
+
+    def update(self, dt_mult=1.0):
+        self.x += self.vx * dt_mult
+        self.y += self.vy * dt_mult
+        self.life -= 1 * dt_mult
+        if self.life <= 0 or self.y < -10: self.reset()
+
+    def draw(self, surface):
+        a = int(self.alpha * self.life / self.max_life)
+        s = pygame.Surface((self.size*2, self.size*2), pygame.SRCALPHA)
+        pygame.draw.circle(s, (*C_RUNEGLOW, a), (self.size, self.size), self.size)
+        surface.blit(s, (int(self.x)-self.size, int(self.y)-self.size))
+
+ink_motes = [InkMote() for _ in range(55)]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  TORCH PLACEMENT
+# ─────────────────────────────────────────────────────────────────────────────
+TORCH_POSITIONS = [
+    (280, 475), (620, 475), (960, 475), (1300, 475), (1640, 475),
+    (400, 355), (700, 255), (1000, 175),
+    (2350, 475), (2550, 475), (2750, 475),
+    (2400, 355), (2700, 255), (2550, 155),
+]
+torches = [Torch(*tp) for tp in TORCH_POSITIONS]
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  LIGHTING LAYER
+# ─────────────────────────────────────────────────────────────────────────────
+DARKNESS = 185
+
+def build_light_layer(player, grunts, seraphs, torches, boss, boss_door, cam_x, floor_door=None):
+    light = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+    light.fill((DARKNESS, DARKNESS, DARKNESS, 255))
+    for t in torches: t.draw(screen, cam_x, light)
+    if player and player.alive:
+        player.draw_light(light, cam_x)
+    for g in grunts:   g.draw_light(light, cam_x)
+    for s in seraphs:  s.draw_light(light, cam_x)
+    if boss_door: boss_door.draw_light(light, cam_x)
+    if floor_door: floor_door.draw_light(light, cam_x)
+    if boss and boss.is_alive:
+        boss.draw_light(light, cam_x)
+    return light
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  WORLD DEFINITIONS
+# ─────────────────────────────────────────────────────────────────────────────
+GRUNT_DEFS = [
+    ( 350,  404,   200,   600),
+    ( 750,  404,   600,   950),
+    (1050,  150,   900,  1200),
+    (1300,  404,  1100,  1500),
+    (1600,  250,  1450,  1750),
+]
+SERAPH_DEFS = [
+    (2400,  150),
+    (3000,  120),
+    (3600,  100),
+]
+PLATFORM_DEFS_F1 = [
+    (400, 380), (700, 280), (1000, 200), (1500, 300),
+]
+PLATFORM_DEFS_F2 = [
+    (2300, 380), (2600, 280), (2900, 200),
+    (3200, 300), (3500, 380), (3800, 250),
+]
+
+FLOOR_DOOR_POS = (1850, 380)
+BOSS_DOOR_POS  = (4000, 380)
+BOSS_SPAWN     = (4600, 380)
+
+# STATE values: "main_menu", "floor1", "floor2", "boss_room", "paused"
+STATE = "main_menu"
+PREV_STATE = "main_menu"
+menu_view = "main"
+camera_x = 0.0
+
+# Initialize global game vars to None until play starts
+player = None
+platforms = []
+grunts = []
+seraphs = []
+floor_door = None
+boss_door = None
+boss = None
+
+def build_world():
+    global player, platforms, grunts, seraphs, floor_door, boss_door, boss, camera_x, STATE
+    STATE      = "floor1"
+    player     = Reaper(100, 380)
+    platforms  = [Platform(*pd) for pd in PLATFORM_DEFS_F1 + PLATFORM_DEFS_F2]
+    grunts     = [Grunt(*gd)    for gd in GRUNT_DEFS]
+    seraphs    = [Seraph(*sd)   for sd in SERAPH_DEFS]
+    floor_door = FloorDoor(*FLOOR_DOOR_POS)
+    boss_door  = BossDoor(*BOSS_DOOR_POS)
+    boss       = Boss(*BOSS_SPAWN)
+    camera_x   = 0.0
+    particles.clear()
+    void_tears.clear()
+
+announce_timer = 0
+announce_text  = ""
+announce_color = C_PARCH
+
+def announce(text, color=C_YELLOW, duration=130):
+    global announce_timer, announce_text, announce_color
+    announce_text  = text
+    announce_color = color
+    announce_timer = duration
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  FEATURE GLOBALS
+# ─────────────────────────────────────────────────────────────────────────────
+hit_stop_timer = 0.0
+time_scale       = 1.0
+bullet_time_timer = 0
+
+_vignette_surf = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+pygame.draw.rect(_vignette_surf, (0, 0, 0, 0), _vignette_surf.get_rect())
+_cx, _cy = WIDTH // 2, HEIGHT // 2
+for _vy in range(HEIGHT):
+    for _vx in range(WIDTH):
+        _dist = math.hypot(_vx - _cx, _vy - _cy)
+        _max_d = math.hypot(_cx, _cy)
+        _t = min(1.0, _dist / _max_d)
+        _a = int(255 * (_t ** 2.0))
+        _vignette_surf.set_at((_vx, _vy), (0, 0, 0, _a))
+
+_heartbeat_sound   = None
+_heartbeat_playing = False
+
+def _init_heartbeat():
+    global _heartbeat_sound
+    for ext in (".wav", ".ogg"):
+        try:
+            _heartbeat_sound = pygame.mixer.Sound("heartbeat" + ext)
+            break
+        except Exception:
+            pass
+
+_init_heartbeat()
+
+# UI Button Rectangles 
+play_rect     = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 - 20, 200, 50)
+settings_rect = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 50, 200, 50)
+quit_rect     = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 120, 200, 50)
+
+# Pause menu specific
+resume_rect   = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 - 90, 200, 50)
+pause_settings_rect = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 - 20, 200, 50)
+main_menu_rect = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 50, 200, 50)
+
+# Settings specific
+bgm_down_rect = pygame.Rect(WIDTH//2 - 150, HEIGHT//2 - 75, 40, 40)
+bgm_up_rect   = pygame.Rect(WIDTH//2 + 110, HEIGHT//2 - 75, 40, 40)
+sfx_down_rect = pygame.Rect(WIDTH//2 - 150, HEIGHT//2 - 5, 40, 40)
+sfx_up_rect   = pygame.Rect(WIDTH//2 + 110, HEIGHT//2 - 5, 40, 40)
+back_rect     = pygame.Rect(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50)
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  MAIN LOOP
+# ─────────────────────────────────────────────────────────────────────────────
+while True:
+    raw_dt = clock.tick(60)
+    dt_mult = min(raw_dt / (1000 / 60), 3.0)
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            pygame.quit(); sys.exit()
+            
+        # ── Mouse Clicks ──
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mx, my = pygame.mouse.get_pos()
+            
+            # MAIN MENU logic
+            if STATE == "main_menu":
+                if menu_view == "main":
+                    if play_rect.collidepoint(mx, my):
+                        build_world()
+                        announce("FLOOR 1 — MISSION START", C_CYAN)
+                    elif settings_rect.collidepoint(mx, my):
+                        menu_view = "settings"
+                    elif quit_rect.collidepoint(mx, my):
+                        pygame.quit(); sys.exit()
+                elif menu_view == "settings":
+                    if bgm_down_rect.collidepoint(mx, my):
+                        audio.set_bgm_volume(audio.bgm_vol - 0.1)
+                    elif bgm_up_rect.collidepoint(mx, my):
+                        audio.set_bgm_volume(audio.bgm_vol + 0.1)
+                    elif sfx_down_rect.collidepoint(mx, my):
+                        audio.sfx_vol = max(0.0, audio.sfx_vol - 0.1)
+                        audio.play_sfx("slash", 0.6)
+                    elif sfx_up_rect.collidepoint(mx, my):
+                        audio.sfx_vol = min(1.0, audio.sfx_vol + 0.1)
+                        audio.play_sfx("slash", 0.6)
+                    elif back_rect.collidepoint(mx, my):
+                        menu_view = "main"
+
+            # PAUSED logic
+            elif STATE == "paused":
+                if menu_view == "pause_main":
+                    if resume_rect.collidepoint(mx, my):
+                        STATE = PREV_STATE
+                    elif pause_settings_rect.collidepoint(mx, my):
+                        menu_view = "settings"
+                    elif main_menu_rect.collidepoint(mx, my):
+                        STATE = "main_menu"
+                        menu_view = "main"
+                        audio.play_bgm("bgm_explore", audio.bgm_vol)
+                    elif quit_rect.collidepoint(mx, my):
+                        pygame.quit(); sys.exit()
+                elif menu_view == "settings":
+                    if bgm_down_rect.collidepoint(mx, my):
+                        audio.set_bgm_volume(audio.bgm_vol - 0.1)
+                    elif bgm_up_rect.collidepoint(mx, my):
+                        audio.set_bgm_volume(audio.bgm_vol + 0.1)
+                    elif sfx_down_rect.collidepoint(mx, my):
+                        audio.sfx_vol = max(0.0, audio.sfx_vol - 0.1)
+                        audio.play_sfx("slash", 0.6)
+                    elif sfx_up_rect.collidepoint(mx, my):
+                        audio.sfx_vol = min(1.0, audio.sfx_vol + 0.1)
+                        audio.play_sfx("slash", 0.6)
+                    elif back_rect.collidepoint(mx, my):
+                        menu_view = "pause_main"
+
+        # ── Key Presses ──
+        if event.type == pygame.KEYDOWN:
+            if event.key in (pygame.K_ESCAPE, pygame.K_p):
+                if STATE in ["floor1", "floor2", "boss_room"]:
+                    PREV_STATE = STATE
+                    STATE = "paused"
+                    menu_view = "pause_main"
+                elif STATE == "paused":
+                    if menu_view == "settings":
+                        menu_view = "pause_main"
+                    else:
+                        STATE = PREV_STATE
+            
+            if STATE not in ["main_menu", "paused"]:
+                if event.key == pygame.K_r:
+                    hit_stop_timer    = 0.0
+                    time_scale        = 1.0
+                    bullet_time_timer = 0
+                    audio.play_bgm("bgm_explore", audio.bgm_vol)
+                    build_world()
+                    announce("FLOOR 1 — MISSION START", C_CYAN)
+                    
+                if event.key == pygame.K_e and STATE == "floor1":
+                    if floor_door.rect.colliderect(player.rect) and not floor_door.locked:
+                        STATE = "floor2"
+                        player.pos.x  = FLOOR_DOOR_POS[0] + 150
+                        player.rect.x = int(player.pos.x)
+                        camera_x      = player.rect.centerx - WIDTH // 2
+                        announce("FLOOR 2  —  DIVINE SENTINELS AWAIT", C_GOLD, 160)
+                        
+                if event.key == pygame.K_e and STATE == "floor2":
+                    if boss_door.rect.colliderect(player.rect) and not boss_door.locked:
+                        STATE = "boss_room"
+                        player.pos.x  = BOSS_SPAWN[0] - 350
+                        player.rect.x = int(player.pos.x)
+                        camera_x      = player.rect.centerx - WIDTH // 2
+                        announce("⚠  THE INKWARDEN AWAKENS", C_RED, 160)
+                        audio.play_bgm("bgm_boss", audio.bgm_vol)
+
+    # ── Menu Rendering & Update Skip ──
+    if STATE == "main_menu":
+        camera_x += 0.5 * dt_mult
+        _draw_bg_layer(screen, camera_x * 0.25)
+        _draw_mg_layer(screen, camera_x * 0.55)
+        
+        ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 150))
+        screen.blit(ov, (0, 0))
+        
+        draw_text_centered(screen, "ECLIPSE OF THE ORDER", F_BIG, C_GOLD, HEIGHT//4)
+        
+        if menu_view == "main":
+            draw_button(screen, "PLAY", F_MED, C_PARCH, play_rect, C_CYAN)
+            draw_button(screen, "SETTINGS", F_MED, C_PARCH, settings_rect, C_CYAN)
+            draw_button(screen, "QUIT", F_MED, C_PARCH, quit_rect, C_RED)
+            
+        elif menu_view == "settings":
+            draw_text_centered(screen, f"BGM Volume: {int(audio.bgm_vol*100)}%", F_MED, C_PARCH, HEIGHT//2 - 60)
+            draw_button(screen, "<", F_MED, C_PARCH, bgm_down_rect, C_CYAN)
+            draw_button(screen, ">", F_MED, C_PARCH, bgm_up_rect, C_CYAN)
+            
+            draw_text_centered(screen, f"SFX Volume: {int(audio.sfx_vol*100)}%", F_MED, C_PARCH, HEIGHT//2 + 10)
+            draw_button(screen, "<", F_MED, C_PARCH, sfx_down_rect, C_CYAN)
+            draw_button(screen, ">", F_MED, C_PARCH, sfx_up_rect, C_CYAN)
+            
+            draw_button(screen, "BACK", F_MED, C_PARCH, back_rect, C_CYAN)
+        
+        pygame.display.flip()
+        continue 
+
+    # ── Game State Logic ──
+    if STATE != "paused":
+        if hit_stop_timer > 0:
+            hit_stop_timer = max(0.0, hit_stop_timer - dt_mult)
+        else:
+            if bullet_time_timer > 0:
+                bullet_time_timer -= 1
+                if bullet_time_timer <= 0:
+                    time_scale = 1.0
+
+            enemy_dt = dt_mult * time_scale
+            keys = pygame.key.get_pressed()
+            
+            if player and player.alive:
+                player.update(keys, platforms, int(camera_x), dt_mult)
+                all_proj_lists = [s.projectiles for s in seraphs] + [boss.projectiles]
+                player.try_parry(all_proj_lists)
+
+            for p in platforms: p.update(enemy_dt)
+            for t in torches:   t.update(enemy_dt)
+            for m in ink_motes: m.update(enemy_dt)
+            update_particles(enemy_dt)
+
+            for vt in void_tears: vt.update(enemy_dt)
+            void_tears[:] = [vt for vt in void_tears if vt.alive]
+
+            if STATE == "floor1":
+                all_grunts_dead = all(not g.alive for g in grunts)
+                if all_grunts_dead and floor_door.locked:
+                    floor_door.unlock()
+                    announce("ALL GUARDS SLAIN  —  DESCEND TO FLOOR 2", C_ORANGE, 180)
+                floor_door.update(enemy_dt)
+                for g in grunts: g.update(player, platforms, enemy_dt)
+
+            elif STATE == "floor2":
+                all_seraphs_dead = all(not s.alive for s in seraphs)
+                if all_seraphs_dead and boss_door.locked:
+                    boss_door.unlock()
+                    announce("ALL DIVINE SENTINELS SILENCED  —  THE KEEP DOOR OPENS", C_CYAN, 180)
+                boss_door.update(enemy_dt)
+                for s in seraphs: s.update(player, enemy_dt)
+
+            elif STATE == "boss_room":
+                boss.update(player, platforms, enemy_dt)
+
+            if player and player.alive and player.hp == 1:
+                if _heartbeat_sound and not _heartbeat_playing:
+                    _heartbeat_playing = True
+                    _heartbeat_sound.play(loops=-1)
+            else:
+                if _heartbeat_sound and _heartbeat_playing:
+                    _heartbeat_playing = False
+                    _heartbeat_sound.stop()
+
+            if player:
+                camera_x += (player.rect.centerx - camera_x - WIDTH // 2) / 10
+                
+            if announce_timer > 0: announce_timer -= 1 * dt_mult
+
+    # ── RENDER ────────────────────────────────────────────────────────────────
+    _draw_bg_layer(screen, camera_x * 0.25)
+    _draw_mg_layer(screen, camera_x * 0.55)
+
+    for m in ink_motes: m.draw(screen)
+
+    fw = floor_img.get_width()
+    for i in range(-5, 60):
+        screen.blit(floor_img, (i * fw - int(camera_x), 500))
+
+    for p in platforms: p.draw(screen, camera_x)
+
+    light_layer = build_light_layer(player, grunts, seraphs, torches, boss, boss_door, camera_x, floor_door)
+
+    if STATE == "floor1" or (STATE == "paused" and PREV_STATE == "floor1"):
+        if floor_door: floor_door.draw(screen, camera_x)
+        for g in grunts:  g.draw(screen, camera_x)
+    elif STATE == "floor2" or (STATE == "paused" and PREV_STATE == "floor2"):
+        if boss_door: boss_door.draw(screen, camera_x)
+        for s in seraphs: s.draw(screen, camera_x)
+    elif STATE == "boss_room" or (STATE == "paused" and PREV_STATE == "boss_room"):
+        if boss: boss.draw(screen, camera_x)
+
+    if player: player.draw(screen, camera_x)
+
+    for vt in void_tears: vt.draw(screen, camera_x)
+    draw_particles(screen, camera_x)
+    screen.blit(light_layer, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+
+    if player: player.draw_hud(screen)
+
+    current_ui_state = PREV_STATE if STATE == "paused" else STATE
+
+    if current_ui_state == "floor1":
+        rem_g = sum(1 for g in grunts if g.alive)
+        sc    = C_RED if rem_g > 0 else C_CYAN
+        st    = F_SM.render(f"FLOOR 1  |  GUARDS: {rem_g}", True, sc)
+        screen.blit(st, (WIDTH - st.get_width() - 12, 12))
+        ob = F_SM.render("OBJECTIVE: SLAY ALL GUARDS → DESCEND [E]", True, C_GREY)
+        screen.blit(ob, (WIDTH - ob.get_width() - 12, 28))
+    elif current_ui_state == "floor2":
+        rem_s = sum(1 for s in seraphs if s.alive)
+        sc    = C_RED if rem_s > 0 else C_CYAN
+        st    = F_SM.render(f"FLOOR 2  |  SERAPHS: {rem_s}", True, sc)
+        screen.blit(st, (WIDTH - st.get_width() - 12, 12))
+        ob = F_SM.render("OBJECTIVE: PURGE ALL SERAPHS → ENTER THE KEEP [E]", True, C_GREY)
+        screen.blit(ob, (WIDTH - ob.get_width() - 12, 28))
+
+    if announce_timer > 0 and STATE != "paused":
+        alpha  = min(255, announce_timer * 6)
+        banner = F_MED.render(announce_text, True, announce_color)
+        bg2    = pygame.Surface((banner.get_width()+32, banner.get_height()+14),
+                                pygame.SRCALPHA)
+        bg2.fill((0, 0, 0, min(190, alpha)))
+        bxs2 = WIDTH  // 2 - bg2.get_width()  // 2
+        bys2 = HEIGHT // 2 - 64
+        screen.blit(bg2,    (bxs2, bys2))
+        banner.set_alpha(alpha)
+        screen.blit(banner, (bxs2 + 16, bys2 + 7))
+
+    if current_ui_state == "boss_room" and boss and boss.is_alive:
+        phase_labels = {1: "PHASE I  —  RANGED", 2: "PHASE II  —  FIND THE KEYS", 3: "PHASE III  —  UNLEASHED"}
+        phase_colors = {1: C_GOLD, 2: C_ORANGE, 3: C_RED}
+        ph    = boss.current_phase
+        bw    = 320
+        bh    = 14
+        bx_hb = WIDTH // 2 - bw // 2
+        by_hb = HEIGHT - 52
+        pygame.draw.rect(screen, (30, 15, 45), (bx_hb - 2, by_hb - 2, bw + 4, bh + 4),
+                         border_radius=6)
+        fill_hp = int(bw * boss.hp / boss.MAX_HP)
+        pygame.draw.rect(screen, phase_colors[ph], (bx_hb, by_hb, fill_hp, bh),
+                         border_radius=5)
+        ph_lbl = F_SM.render(f"INKWARDEN  [{phase_labels[ph]}]", True, phase_colors[ph])
+        screen.blit(ph_lbl, (WIDTH // 2 - ph_lbl.get_width() // 2, by_hb - 16))
+        if ph == 2:
+            key_txt = F_SM.render(
+                f"KEYS: {boss.keys_collected}/{BossKey.TOTAL}" +
+                ("  — STRIKE!" if boss.p2_vulnerable else "  — FIND THEM ALL"),
+                True, C_GOLD if not boss.p2_vulnerable else C_CYAN)
+            screen.blit(key_txt, (WIDTH // 2 - key_txt.get_width() // 2, by_hb + 18))
+
+    if player and not player.alive and STATE != "paused":
+        ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 170)); screen.blit(ov, (0, 0))
+        draw_text_centered(screen, "YOUR REIGN ENDS HERE", F_BIG, C_RED,   HEIGHT//2 - 44)
+        draw_text_centered(screen, "Press  R  to reclaim the keep", F_MED, C_PARCH2, HEIGHT//2 + 20)
+
+    if current_ui_state == "boss_room" and boss and not boss.is_alive and boss.death_timer <= 0 and STATE != "paused":
+        ov = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        ov.fill((0, 0, 0, 150)); screen.blit(ov, (0, 0))
+        draw_text_centered(screen, "THE INKWARDEN FALLS",   F_BIG, C_YELLOW, HEIGHT//2 - 44)
+        draw_text_centered(screen, "The Keep is yours once more.", F_MED, C_PARCH2, HEIGHT//2 + 20)
+        draw_text_centered(screen, "Press  R  to begin again",     F_MED, C_PARCH2, HEIGHT//2 + 48)
+
+    hint = F_SM.render(
+        "WASD: move  |  SPACE: jump  |  F: attack  |  C: ultimate  |  G: parry  |  E: dash  |  Q: void blink  |  R: restart  |  ESC: pause",
+        True, (50, 45, 65))
+    screen.blit(hint, (WIDTH//2 - hint.get_width()//2, HEIGHT - 20))
+
+    if player and player.alive and player.hp == 1 and STATE != "paused":
+        pulse = 0.55 + 0.45 * math.sin(pygame.time.get_ticks() * 0.006)
+        vig_a = int(200 * pulse)
+        _vignette_surf.set_alpha(vig_a)
+        tinted = _vignette_surf.copy()
+        tint_layer = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        tint_layer.fill((120, 0, 0, 0))
+        tinted.blit(tint_layer, (0, 0), special_flags=pygame.BLEND_RGBA_ADD)
+        screen.blit(tinted, (0, 0))
+
+    if bullet_time_timer > 0 and STATE != "paused":
+        bt_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        bt_a = int(35 * (bullet_time_timer / 60))
+        bt_overlay.fill((0, 60, 120, bt_a))
+        screen.blit(bt_overlay, (0, 0))
+        bt_txt = F_MED.render("BULLET TIME", True, C_CYAN)
+        bt_txt.set_alpha(min(255, bt_a * 5))
+        screen.blit(bt_txt, (WIDTH // 2 - bt_txt.get_width() // 2, 80))
+
+    # ── Draw Pause Menu ──
+    if STATE == "paused":
+        pause_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        pause_overlay.fill((0, 0, 0, 180))
+        screen.blit(pause_overlay, (0, 0))
+        
+        draw_text_centered(screen, "PAUSED", F_BIG, C_GOLD, HEIGHT//4)
+        
+        if menu_view == "pause_main":
+            draw_button(screen, "RESUME", F_MED, C_PARCH, resume_rect, C_CYAN)
+            draw_button(screen, "SETTINGS", F_MED, C_PARCH, pause_settings_rect, C_CYAN)
+            draw_button(screen, "MAIN MENU", F_MED, C_PARCH, main_menu_rect, C_CYAN)
+            draw_button(screen, "QUIT", F_MED, C_PARCH, quit_rect, C_RED)
+            
+        elif menu_view == "settings":
+            draw_text_centered(screen, f"BGM Volume: {int(audio.bgm_vol*100)}%", F_MED, C_PARCH, HEIGHT//2 - 60)
+            draw_button(screen, "<", F_MED, C_PARCH, bgm_down_rect, C_CYAN)
+            draw_button(screen, ">", F_MED, C_PARCH, bgm_up_rect, C_CYAN)
+            
+            draw_text_centered(screen, f"SFX Volume: {int(audio.sfx_vol*100)}%", F_MED, C_PARCH, HEIGHT//2 + 10)
+            draw_button(screen, "<", F_MED, C_PARCH, sfx_down_rect, C_CYAN)
+            draw_button(screen, ">", F_MED, C_PARCH, sfx_up_rect, C_CYAN)
+            
+            draw_button(screen, "BACK", F_MED, C_PARCH, back_rect, C_CYAN)
+
+    pygame.display.flip()
