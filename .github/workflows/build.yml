@@ -1,48 +1,17 @@
-name: Build Release
+name: Build Windows Release
 
 on:
   push:
     tags:
-      - 'v*'          # triggers on any tag like v1.0, v1.1, etc.
+      - 'v*'
 
 jobs:
-
-  build-linux:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install pygame pyinstaller
-
-      - name: Build Linux
-        run: |
-          pyinstaller --onefile --windowed \
-            --name "Eclipse of the Order" \
-            --add-data "assets:assets" \
-            eclipse_of_the_order.py
-
-      - name: Zip Linux build
-        run: |
-          cd dist
-          zip -r "../Eclipse_of_the_Order_Linux.zip" "Eclipse of the Order"
-
-      - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-build
-          path: Eclipse_of_the_Order_Linux.zip
-
-  build-windows:
+  build:
     runs-on: windows-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -53,43 +22,20 @@ jobs:
         run: |
           pip install pygame pyinstaller
 
-      - name: Build Windows
+      - name: Build exe
         run: |
-          pyinstaller --onefile --windowed `
-            --name "Eclipse of the Order" `
-            --add-data "assets;assets" `
-            eclipse_of_the_order.py
+          pyinstaller --onefile --windowed --name "Eclipse of the Order" --add-data "assets;assets" eclipse_of_the_order.py
 
-      - name: Zip Windows build
+      - name: Zip release
         run: |
-          cd dist
-          Compress-Archive -Path "Eclipse of the Order.exe" -DestinationPath "../Eclipse_of_the_Order_Windows.zip"
+          Compress-Archive -Path "dist\Eclipse of the Order.exe" -DestinationPath "Eclipse.of.the.Order.${{ github.ref_name }}.zip"
 
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-build
-          path: Eclipse_of_the_Order_Windows.zip
-
-  release:
-    needs: [build-windows]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download Linux build
-        uses: actions/download-artifact@v4
-        with:
-          name: linux-build
-
-      - name: Download Windows build
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-build
-
-      - name: Create GitHub Release
+      - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            Eclipse_of_the_Order_Linux.zip
-            Eclipse_of_the_Order_Windows.zip
+          files: Eclipse.of.the.Order.${{ github.ref_name }}.zip
+          name: Eclipse of the Order ${{ github.ref_name }}
+          body: |
+            ## Eclipse of the Order ${{ github.ref_name }}
+            
+            Download the zip, extract, and run the exe.

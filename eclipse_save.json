@@ -1,15 +1,84 @@
 {
-  "divine_essence": 11,
-  "total_runs": 4,
-  "bosses_defeated": 3,
-  "total_kills": 94,
-  "best_combo": 12,
-  "upg_max_hp": 100,
-  "upg_dash_cd": 45,
+  "divine_essence": 32113,
+  "total_runs": 38,
+  "bosses_defeated": 5,
+  "total_kills": 266,
+  "best_combo": 77,
+  "best_floor": 4,
+  "total_parries": 49,
+  "upg_max_hp": 30,
+  "upg_dash_cd": 35,
   "upg_double_jump": true,
   "upg_blink": true,
   "upg_ult": true,
-  "upg_parry_window": 12,
-  "upg_relic_slots": 2,
-  "curse_level": 3
+  "upg_parry_window": 22,
+  "upg_relic_slots": 5,
+  "curse_level": 9,
+  "reforge_bonus": 38,
+  "fullscreen": true,
+  "run_history": [
+    {
+      "floor": 1,
+      "kills": 2,
+      "relics": 0,
+      "parries": 0,
+      "curse": "none"
+    },
+    {
+      "floor": 4,
+      "kills": 33,
+      "relics": 2,
+      "parries": 0,
+      "curse": "none"
+    },
+    {
+      "floor": 4,
+      "kills": 0,
+      "relics": 0,
+      "parries": 0,
+      "curse": "none"
+    },
+    {
+      "floor": 1,
+      "kills": 4,
+      "relics": 0,
+      "parries": 0,
+      "curse": "none"
+    }
+  ],
+  "resolution_idx": 2,
+  "bgm_vol": 0.35,
+  "sfx_vol": 0.9,
+  "binds": {
+    "left": 97,
+    "right": 100,
+    "up": 119,
+    "down": 115,
+    "jump": 32,
+    "dash": 1073742049,
+    "atk": 102,
+    "bolt": 103,
+    "blink": 113,
+    "ult": 99,
+    "flask": 114,
+    "stance": 118,
+    "interact": 101,
+    "trinket": 116,
+    "cleave": 120
+  },
+  "pad_binds": {
+    "jump": 0,
+    "bolt": 5,
+    "flask": 2,
+    "atk": 2,
+    "parry": 4,
+    "dash": 1,
+    "blink": 1,
+    "ult": 10,
+    "interact": 9,
+    "trinket": 10,
+    "cleave": 7,
+    "stance": 8,
+    "start": 7
+  }
 }

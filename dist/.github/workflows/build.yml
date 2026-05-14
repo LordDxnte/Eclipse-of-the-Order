@@ -15,6 +15,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'          # triggers on any tag like v1.0, v1.1, etc.
+
+jobs:
+
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
           python-version: '3.11'
 
       - name: Install dependencies
@@ -23,7 +40,7 @@ jobs:
 
       - name: Build Linux
         run: |
-          pyinstaller --onedir --windowed \
+          pyinstaller --onefile --windowed \
             --name "Eclipse of the Order" \
             --add-data "assets:assets" \
             eclipse_of_the_order.py
@@ -55,7 +72,7 @@ jobs:
 
       - name: Build Windows
         run: |
-          pyinstaller --onedir --windowed `
+          pyinstaller --onefile --windowed `
             --name "Eclipse of the Order" `
             --add-data "assets;assets" `
             eclipse_of_the_order.py
@@ -63,7 +80,7 @@ jobs:
       - name: Zip Windows build
         run: |
           cd dist
-          Compress-Archive -Path "Eclipse of the Order" -DestinationPath "../Eclipse_of_the_Order_Windows.zip"
+          Compress-Archive -Path "Eclipse of the Order.exe" -DestinationPath "../Eclipse_of_the_Order_Windows.zip"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
@@ -72,7 +89,7 @@ jobs:
           path: Eclipse_of_the_Order_Windows.zip
 
   release:
-    needs: [build-linux, build-windows]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
