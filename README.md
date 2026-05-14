@@ -1,105 +1,66 @@
 # Eclipse of the Order
 
-A dark fantasy action roguelite built in Python with Pygame.
+A brutal, fast-paced dark fantasy action roguelite built from scratch in Python and Pygame. 
 
-Fight through cursed floors, collect relics, master your abilities, and face the Sovereign Aetheria in an escalating battle across three brutal phases.
+Step into the shoes of a fallen Reaper. Fight through cursed, procedurally generated floors, collect game-breaking relics, master two distinct combat stances, and face the Sovereign Aetheria in a grueling multi-phase boss fight. Die, upgrade your arsenal in the Sanctum, and descend again. 
 
----
+## ⚔️ Features (v1.0)
 
-## Gameplay
-
-Each run takes you through procedurally generated floors packed with enemies. Kill everything to unlock the door and descend deeper. Survive long enough and you'll face the boss. Die and start again — but keep your Divine Essence and spend it on permanent upgrades between runs.
-
-The game gets harder with every boss you beat. Welcome to NG+.
-
----
-
-## Controls
-
-| Key | Action |
-|---|---|
-| WASD / Arrow Keys | Move |
-| SPACE | Jump (double jump if upgraded) |
-| SHIFT | Dash |
-| Left Click / F | Slash attack — or Execute a stunned enemy |
-| Right Click | Void Bolt (costs Mana) |
-| G | Parry |
-| Q | Void Blink (upgrade required) |
-| C | Soul Rend ultimate (upgrade required) |
-| E | Interact / Use door |
-| P / ESC | Pause |
-| F11 | Toggle fullscreen |
+* **Dual-Stance Combat:** Dynamically switch between the agile *Reaper* stance and the devastating *Executioner* stance mid-combat.
+* **The Talisman System:** Equip powerful modifiers like *Void Warden* or *Blood Pact* to drastically alter your playstyle and abilities.
+* **Master Mode (NG+):** Defeating the boss is just the beginning. Enter the Master Loop to face escalating Curse Levels with faster enemies, elite variants, and hazardous floor modifiers.
+* **Feline Companions:** Rescue and fight alongside Champa (who pounces and marks enemies for bonus damage) or Pepper (who generates a void ring to intercept projectiles).
+* **Deep Progression:** 10+ Relics, permanent Sanctum upgrades, and interactive map objects like Cursed Blood Altars and Treasure Rooms.
+* **Full Gamepad Support:** Seamlessly swap between Keyboard/Mouse and Controller with dynamic UI prompts.
 
 ---
 
-## Relics
+## 🎮 Controls
 
-Relics are passive items collected during a run. Each one changes how you play.
+Fully customizable in the in-game Keybinds menu.
 
-- **Void Heart** — +2 Max HP this run
-- **Obsidian Edge** — Attacks deal +1 damage
-- **Wraith's Grace** — Dash has 2 charges
-- **Soul Siphon** — Kills restore 1 HP
-- **Thorn Mantle** — Parry stuns melee enemies
-- **Void Echo** — Blink damages in a radius
-- **Cursed Blade** — +50% damage, -1 max HP
-- **Gilded Soul** — +25% essence gain
-- **Iron Will** — First lethal hit leaves you at 1 HP
-- **Plague Touch** — Attacks poison enemies
+| Action | Keyboard & Mouse | Gamepad |
+| :--- | :--- | :--- |
+| **Move** | `W` `A` `S` `D` | D-Pad / Left Stick |
+| **Jump / Double Jump**| `SPACE` | `A` |
+| **Dash** | `L-SHIFT` | `RB` |
+| **Attack / Execute** | `F` or `Left Click` | `Y` |
+| **Parry** | `Right Click` | `LB` |
+| **Void Bolt** | `G` | `B` |
+| **Use Flask** | `R` | `X` |
+| **Change Stance** | `V` | `L3` (Stick Click) |
+| **Hollow Cleave** | `X` | `R3` (Stick Click) |
+| **Void Blink** | `Q` | `LT` |
+| **Soul Rend (Ultimate)**| `C` | `RT` |
+| **Interact** | `E` | `A` |
 
----
-
-## Permanent Upgrades
-
-Spend Divine Essence at The Inevitable (the Sanctum NPC) between runs:
-
-- +1 Max HP
-- Faster Dash cooldown
-- Double Jump
-- Void Blink
-- Soul Rend Ultimate
-- Wider Parry window
-- Extra Relic slots
+*(Note: Blink, Soul Rend, and Double Jump must be unlocked via the Sanctum).*
 
 ---
 
-## The Boss — Sovereign Aetheria
+## 💀 Combat Systems
 
-Three phases. Each one worse than the last.
+### Stances
+* **Reaper Stance:** Fast attacks, standard parry windows, and access to the *Soul Rend* screen-clearing ultimate.
+* **Executioner Stance:** Attacks deal 2x damage, but parry windows are halved. Replaces your ultimate with *Hollow Cleave*, a devastating offensive dash that leaves Abyssal Tears in its wake.
 
-- **Phase I** — Ranged attacks, aggressive pursuit
-- **Phase II** — Invulnerable until you collect all 4 scattered keys
-- **Phase III** — Charges, summons adds, relentless pressure
-
-Break her posture to stagger her. Execute her while stunned for massive damage.
-
----
-
-## Running from Source
-
-**Requirements:** Python 3.10+ and Pygame
-
-```bash
-pip install pygame
-python3 eclipse_of_the_order.py
-```
-
-Place all assets in an `assets/` folder next to the script.
+### Posture & Executions
+Consecutive hits and successful parries drain an enemy's Stagger Meter. Once broken, the enemy is stunned. Approach a stunned enemy and press `Attack` to trigger a lethal Execution, restoring HP and granting a massive combo boost.
 
 ---
 
-## Building
+## 🛠️ Installation & Running
 
-```bash
-pip install pyinstaller
-pyinstaller --onedir --windowed --name "Eclipse of the Order" --add-data "assets:assets" eclipse_of_the_order.py
-```
+### Play the Standalone Executable (Windows/Linux)
+Simply download the latest `.exe` from the Releases tab, extract the folder (ensure the `assets` folder is kept in the same directory as the executable), and double-click to play. No installation required.
 
-The finished build will be in `dist/Eclipse of the Order/`.
+### Run from Source
+If you want to run the raw Python code or compile it yourself:
 
----
-
-## Credits
-
-Made by **LordDxnte**  
-Built with Python + Pygame
+1. Ensure you have **Python 3.10+** installed.
+2. Install Pygame:
+   ```bash
+   pip install pygame
+3.Clone the repository and run the script:
+```Bash
+   python eclipse_of_the_order.py
